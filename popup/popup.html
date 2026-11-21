@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SafeBlock</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <h1>SafeBlock</h1>
+    <label class="setting">
+      <input type="checkbox" id="adBlocking">
+      <span>Block ads and trackers</span>
+    </label>
+    <label class="setting">
+      <input type="checkbox" id="adultFilter">
+      <span>Block adult content (opt-in)</span>
+    </label>
+  </main>
+  <script src="../lib/compat.js"></script>
+  <script src="../lib/settings.js"></script>
+  <script src="../lib/rules.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

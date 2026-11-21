@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SafeBlock Options</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <h1>SafeBlock Options</h1>
+    <label class="setting">
+      <input type="checkbox" id="adBlocking">
+      <span>Block ads and trackers</span>
+    </label>
+    <label class="setting">
+      <input type="checkbox" id="adultFilter">
+      <span>Block adult content (opt-in)</span>
+    </label>
+    <p class="note">
+      The adult content filter is optional and off by default. Turning it on
+      blocks known adult domains and asks for confirmation first. You can turn
+      it off again at any time.
+    </p>
+  </main>
+  <script src="../lib/compat.js"></script>
+  <script src="../lib/settings.js"></script>
+  <script src="../lib/rules.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

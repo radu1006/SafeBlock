@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "SafeBlock",
+  "version": "0.1.0",
+  "description": "Cross-browser Manifest V3 ad-blocking extension.",
+  "permissions": [
+    "declarativeNetRequest",
+    "storage"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ads_trackers",
+        "enabled": true,
+        "path": "rules/ads_trackers.json"
+      },
+      {
+        "id": "adult_filter",
+        "enabled": false,
+        "path": "rules/adult_filter.json"
+      }
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.youtube.com/*"
+      ],
+      "js": [
+        "lib/compat.js",
+        "lib/settings.js",
+        "content/youtube.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html"
+  },
+  "options_ui": {
+    "page": "options/options.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "safeblock@example.com",
+      "strict_min_version": "113.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  }
+}

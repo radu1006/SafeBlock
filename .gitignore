@@ -1,0 +1,14 @@
+# Distribution artifact (built locally, not tracked)
+*.zip
+
+# Dependencies and tool caches
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local scratch/verification output
+/tmp/
+.verify/
+*.log
