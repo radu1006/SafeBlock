@@ -23,7 +23,7 @@ Licensed under the [Apache License 2.0](LICENSE) · source:
 | Feature | How it works | Default |
 |---|---|---|
 | Ad and tracker blocking | Static `declarativeNetRequest` ruleset `ads_trackers` (`rules/ads_trackers.json`, 109 rules) blocks known ad/tracker domains for main frames, sub-frames, scripts, images and XHR. | **On** |
-| YouTube ad handling | Content script `content/youtube.js` on `*.youtube.com` and `m.youtube.com` clicks skip buttons, seeks in-stream ad videos to their end, and hides ad slots. Runs only while ad blocking is on. | Follows ad blocking |
+| YouTube ad handling | Content script `content/youtube.js` on `*.youtube.com` and `m.youtube.com` clicks skip buttons, seeks in-stream ad videos to their end, and hides ad slots: player-area units plus in-feed, shelf and masthead sponsored cards. Runs only while ad blocking is on. | Follows ad blocking |
 | Adult content filter | Second static ruleset `adult_filter` (`rules/adult_filter.json`, 181 rules) blocks known adult domains. Disabled in the manifest and off in settings until the user turns it on. | **Off (opt-in)** |
 
 The adult filter is **never enabled automatically**. Its ruleset ships with
@@ -150,7 +150,7 @@ rules/adult_filter.json  Static DNR block list for adult domains (ids 1000-1180,
 lib/compat.js            Aliases chrome -> browser so one code path works in both engines
 lib/settings.js          Defaults + getSettings()/setSettings() over browser.storage.local
 lib/rules.js             Maps settings to ruleset enable/disable via updateEnabledRulesets()
-content/youtube.js       YouTube ad skipping and ad-slot hiding (youtube.com only)
+content/youtube.js       YouTube ad skipping, ad-slot hiding and in-feed/promoted card hiding (youtube.com only)
 popup/                   Toolbar popup: popup.html, popup.js, popup.css
 options/                 Options page: options.html, options.js, options.css
 icons/                   icon16.png, icon48.png, icon128.png
@@ -235,9 +235,21 @@ Then reload the extension (see below) so the new ruleset is read.
   are global. Current workaround: turn ad blocking off for the site you need,
   then turn it back on.
 - **YouTube DOM changes can break the content script.** `content/youtube.js`
-  relies on YouTube's class names (`.ytp-ad-skip-button*`, `.ad-interrupting
-  video`, `.ytp-ad-module`, …). If YouTube renames or restructures them, ad
-  handling silently stops while domain blocking keeps working.
+  relies on YouTube's class names and custom element names (`.ytp-ad-skip-button*`,
+  `.ad-interrupting video`, `.ytp-ad-module`, `ytd-ad-slot-renderer`, …). If
+  YouTube renames or restructures them, ad handling silently stops while domain
+  blocking keeps working.
+- **In-feed ad hiding is cosmetic, best-effort DOM filtering.** In-feed, shelf and
+  masthead sponsored cards are hidden by an injected `display: none` style that
+  matches YouTube's current custom elements: `ytd-ad-slot-renderer`,
+  `ytd-in-feed-ad-layout-renderer`, `ytd-promoted-sparkles-web-renderer`,
+  `ytd-promoted-video-renderer`, `ytd-companion-slot-renderer`,
+  `ytd-banner-promo-renderer`, `ytd-statement-banner-renderer`,
+  `ytd-brand-video-shelf-renderer` and `#masthead-ad`. A renamed or obfuscated
+  renderer silently stops matching, and these are first-party ads served from
+  YouTube's own domain, so the network-level `declarativeNetRequest` rulesets
+  cannot cover them. The script re-applies the style on YouTube's SPA navigation,
+  but it never guarantees that every sponsored card is removed.
 - **Unpacked extension needs reloading after code changes.** After editing JS,
   HTML, CSS or rules, click the reload button on the SafeBlock card in
   `chrome://extensions`; in Firefox, remove and re-add the temporary add-on.

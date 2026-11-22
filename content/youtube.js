@@ -24,10 +24,22 @@
   const OVERLAY_CLOSE_SELECTORS = [".ytp-ad-overlay-close-button"];
   const AD_VIDEO_SELECTOR = ".ad-interrupting video, video.ad-showing";
   const HIDE_SELECTORS = [
+    // Player-area ads.
     "#player-ads",
     ".ytp-ad-overlay-container",
     "ytd-display-ad-renderer",
-    ".ytp-ad-module"
+    ".ytp-ad-module",
+    // In-feed, promoted, shelf and masthead ads. These are first-party DOM, so
+    // they can only be hidden here and not through the network rulesets.
+    "ytd-ad-slot-renderer",
+    "ytd-in-feed-ad-layout-renderer",
+    "ytd-promoted-sparkles-web-renderer",
+    "ytd-promoted-video-renderer",
+    "ytd-companion-slot-renderer",
+    "ytd-banner-promo-renderer",
+    "ytd-statement-banner-renderer",
+    "ytd-brand-video-shelf-renderer",
+    "#masthead-ad"
   ];
   const STYLE_ID = "safeblock-youtube-ads";
   const DEBOUNCE_MS = 250;
