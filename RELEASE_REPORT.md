@@ -206,3 +206,123 @@ The project was published to the public repository
   not part of the repository.
 * The browser smoke test listed in §5 and the QA/security reports' O4/§6 items
   are still unexecuted.
+
+---
+
+## 8. Addendum — rebake of both packaged artifacts (2026-11-22)
+
+Rebuild ticket: `tkt_521ecd3b-e70a-44fc-8abe-0e1e0d8b5477` (Release Engineer).
+Trigger: QA defect **DEF-1** (stale `safeblock-extension.zip`) and **DEF-2** (stale
+`safeblock-main.bundle`) from the 2026-11-22 verification of the YouTube in-feed ad
+fix (`tkt_a1ad0cf9`, QA `tkt_4de71cff`). Both artifacts predated the uncommitted
+`content/youtube.js` change and shipped the old 4-selector `HIDE_SELECTORS`, so the
+distributable did not hide in-feed/promoted ads at all.
+
+### 8.1 Commits landed
+
+| Commit | Subject | Files |
+|---|---|---|
+| `f02d5bd` | Hide YouTube in-feed, promoted, shelf and masthead ad slots | `content/youtube.js`, `README.md` (+30/−6) |
+| `193108c` | Record QA verification of the YouTube in-feed ad change | `QA_REPORT.md` (+372) |
+
+Base: `03e81ee` (previous `main`, also `origin/main`). This addendum is a third,
+documentation-only commit on top of `193108c`; it changes no source file and no
+artifact (the artifacts were rebuilt before it was written). The
+`content/youtube.js` change was already reviewed and QA-verified; it was committed
+**as-is** — no source file was edited by this ticket. `manifest.json` is untouched
+(`git show 03e81ee:manifest.json` is identical to the working tree).
+`git status --porcelain -uall` is empty after the commits and the artifact rebuilds
+(both artifacts are ignored: `*.zip` via `.gitignore`, the bundle via
+`.git/info/exclude`).
+
+### 8.2 Artifact A — `safeblock-extension.zip`
+
+| Field | Previous (stale) | Rebuilt (2026-11-22) |
+|---|---|---|
+| Size | 12,406 bytes | **12,579 bytes** |
+| SHA-256 | `25a965dc77fab6cde6566699bc51035855c231c6e25d5685278b28fada402b31` | **`5094a04305201020857dadc1f2a6deee9adcbc5cc400c085e49bd85fdb92ede8`** |
+| Files in archive | 16 | 16 (same list) |
+| `manifest.json` at zip root | yes | yes |
+| Zip integrity (`testzip()`) | clean | clean |
+| Directory entries / absolute or `./` paths | none | none |
+| Tracked by git | no (`*.zip` ignored) | no |
+
+The only entry that differs from the previous archive is `content/youtube.js`
+(8,229 → 8,713 bytes, sha256 `7a51e27f…` → **`678242a5df6ddaddbabeb7be9d4e8c2c9a2604b4fb10525b7a60f3000625f61d`**,
+which equals the working-tree source). All other 15 entries are byte-identical to
+the working tree; all 16 are byte-identical to the post-change tree.
+
+Build recipe (deterministic; nothing else about the archive changed): the 16
+extension runtime files, sorted by path, `manifest.json` at the root, no directory
+entries, no wrapper directory, `ZIP_DEFLATED`, fixed timestamp `2026-11-21 00:00:00`
+and mode 0644. Proof the recipe is the same one used before: re-packing the
+**pre-change** commit `03e81ee` with it reproduces the old artifact exactly
+(12,406 bytes, sha256 `25a965dc…`), so the new zip differs from the old one only in
+`content/youtube.js`.
+
+`HIDE_SELECTORS` read back **out of the zip** (13 entries):
+
+```
+#player-ads, .ytp-ad-overlay-container, ytd-display-ad-renderer, .ytp-ad-module,
+ytd-ad-slot-renderer, ytd-in-feed-ad-layout-renderer,
+ytd-promoted-sparkles-web-renderer, ytd-promoted-video-renderer,
+ytd-companion-slot-renderer, ytd-banner-promo-renderer,
+ytd-statement-banner-renderer, ytd-brand-video-shelf-renderer, #masthead-ad
+```
+
+### 8.3 Artifact B — `safeblock-main.bundle`
+
+| Field | Previous (stale) | Rebuilt (2026-11-22) |
+|---|---|---|
+| Size | 44,357 bytes | **53,537 bytes** |
+| SHA-256 | `e9e87ea089abc14fcf82bd9a602420a68437790efdcecd0ec4965c4358da197c` | **`7d7e5ed15b29fca4d5f39c86298b55e0310674fcbcd74db75a62aef998c604ac`** |
+| `refs/heads/main` | `03e81ee5835988c222cc102efe774f8922a1cb12` | **`193108ce92509fa6de54663abea36eda5be8b962`** |
+| `git show main:content/youtube.js` sha256 | `7a51e27f…` (pre-change) | **`678242a5df6ddaddbabeb7be9d4e8c2c9a2604b4fb10525b7a60f3000625f61d`** |
+| Bundle integrity | `git bundle verify`: complete history | `git bundle verify`: **okay, records a complete history** |
+
+Cut with `git bundle create safeblock-main.bundle refs/heads/main` from `193108c`,
+the last commit before this addendum; it contains the fix commit `f02d5bd`. This
+addendum's own commit follows the bundle and is therefore not inside it — a bundle
+cannot name the commit that records its hash. Re-running the same command after
+this commit reproduces the identical source tree under a new
+`refs/heads/main` value; the artifact-to-source relationship documented here is
+what the release depends on.
+
+### 8.4 Verification performed on the rebuilt artifacts
+
+| Check | Command | Result |
+|---|---|---|
+| Zip parses, no corrupt member | `python3 -m zipfile`-level `zipfile.ZipFile(...).testzip()` | `None` (clean) |
+| No directory entries, no absolute/`./`/`..` paths | entry-list scan | 0 found |
+| `manifest.json` at zip root | entry-list scan | yes (single entry, no wrapper dir) |
+| Every zip entry byte-identical to the working tree | per-entry `sha256` compare, 16/16 | pass, 0 mismatches |
+| Zip `content/youtube.js` = post-change source | `sha256` compare | `678242a5df…` = `678242a5df…` |
+| 13 `HIDE_SELECTORS`, incl. all 9 in-feed/promoted selectors | regex over the entry's block | 13/13 present |
+| No first-party container selector emitted | block scan for `ytd-rich-item-renderer`, `ytd-rich-grid-renderer`, `#content`, `#primary` | none present |
+| Rebuild reproducibility | re-pack `03e81ee` → compare with old artifact | identical bytes (`25a965dc…`) |
+| Bundle ref points at a commit containing the change | `git bundle list-heads` + `git log main -- content/youtube.js` | `193108c` → contains `f02d5bd` |
+| Bundle payload equals the source | `git init` + `git fetch <bundle> refs/heads/main` then `git show main:content/youtube.js \| sha256sum` | `678242a5df…` (13 selectors) |
+| Bundle manifest equals the workspace manifest | `git show main:manifest.json \| cmp - manifest.json` | identical |
+| Negative control: the *old* bundle really was stale | same fetch against the pre-rebuild bundle | ref `03e81ee`, `content/youtube.js` `7a51e27f…` (old) — the failure reproduced, so the green check above is meaningful |
+| Tarball JS syntax + regression scripts | `node --check` (6/6), `.verify/check_scope.js`, `check_resource_types.js`, `check_amo_manifest.js`, `check_youtube_feed.js` | all pass, exit 0 |
+
+### 8.5 Not done / residual
+
+* **Nothing was pushed.** Both commits are local (`main` is 2 commits ahead of
+  `origin/main` = `03e81ee`). No push was requested for this ticket and pushing
+  straight to the default branch is not done without an explicit instruction. When
+  it is wanted, either push `main` directly
+  (`git push origin main`) or publish it through a branch + PR
+  (`git push origin main:refs/heads/release/youtube-in-feed-artifacts` then
+  `gh pr create`). No force-push, no history rewrite, no branch deletion.
+* **The artifacts are not in git** (zip ignored by `.gitignore`, bundle ignored by
+  `.git/info/exclude`), so the remote does not carry them; they must be regenerated
+  from the pushed commit for a store upload. §8.2/§8.3 give the identities to
+  compare against.
+* **Browser smoke test still unexecuted** (§5, `tkt_900cdd95`): no Chrome/Firefox
+  binary in this environment. The artifacts are structurally correct and contain
+  the reviewed code, but "in-feed ads are actually hidden on live YouTube" remains
+  unproven here.
+* The earlier §1/§3 figures describe the pre-publication tree and are superseded by
+  §8 for the current artifacts; §7's statement that the on-disk zip was pre-fix is
+  likewise resolved by §8.
