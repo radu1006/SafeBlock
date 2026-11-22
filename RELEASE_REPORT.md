@@ -308,13 +308,20 @@ what the release depends on.
 
 ### 8.5 Not done / residual
 
-* **Nothing was pushed.** Both commits are local (`main` is 2 commits ahead of
-  `origin/main` = `03e81ee`). No push was requested for this ticket and pushing
-  straight to the default branch is not done without an explicit instruction. When
-  it is wanted, either push `main` directly
-  (`git push origin main`) or publish it through a branch + PR
-  (`git push origin main:refs/heads/release/youtube-in-feed-artifacts` then
-  `gh pr create`). No force-push, no history rewrite, no branch deletion.
+* **Published to `origin` (2026-11-22).** `main` was pushed to
+  `https://github.com/radu1006/SafeBlock.git` as a **fast-forward**:
+  `03e81ee..6ec0688  main -> main` — no force, no history rewrite, no branch
+  deleted. Verified afterwards: `git ls-remote origin` reports
+  `6ec0688da1fa853c983c0505357ab976f4f8dfc5` for both `HEAD` and
+  `refs/heads/main`, and a fresh clone of the remote has
+  `content/youtube.js` = `678242a5df6d…` with all 13 `HIDE_SELECTORS` and
+  `manifest.json` = `b6ca1cb3b787…`. No PR was used: `gh` is not authenticated on
+  this machine (`gh pr list` → "please run `gh auth login`") and a direct push to
+  `main` was explicitly requested. This paragraph was committed and pushed as a
+  documentation-only follow-up, so `git ls-remote origin main` is authoritative for
+  the current tip — it is one commit newer than the `6ec0688` recorded here.
+  The bundle is unchanged by the push and still points at `193108c` (§8.3), which is
+  part of the published history.
 * **The artifacts are not in git** (zip ignored by `.gitignore`, bundle ignored by
   `.git/info/exclude`), so the remote does not carry them; they must be regenerated
   from the pushed commit for a store upload. §8.2/§8.3 give the identities to
