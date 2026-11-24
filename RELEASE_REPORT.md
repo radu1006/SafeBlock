@@ -333,3 +333,164 @@ what the release depends on.
 * The earlier §1/§3 figures describe the pre-publication tree and are superseded by
   §8 for the current artifacts; §7's statement that the on-disk zip was pre-fix is
   likewise resolved by §8.
+
+---
+
+## 9. Addendum — icon artwork rebake of both artifacts (2026-11-24)
+
+Rebuild ticket: `tkt_9dc31de9` (Release Engineer); change `tkt_be15f144` (Developer),
+verification `tkt_2bcfb67d` (QA). Trigger: QA's icon addendum in `QA_REPORT.md` dated
+2026-11-24 returned **PASS** and closed **O5**, while both packaged artifacts still
+carried the flat `#1b5e20` placeholders and a `manifest.json` with no
+`action.default_icon` (and no `icons.32`). As in §8 the artifacts were rebuilt after
+the source commits and before this documentation-only addendum; no source file was
+edited by this ticket.
+
+### 9.1 Commits landed
+
+| Commit | Subject | Files |
+|---|---|---|
+| `ed7b669` | Replace placeholder flat icons with SafeBlock shield artwork | `manifest.json`, `README.md`, `icons/icon{16,32,48,128}.png`, `tools/make_icons.py` (+184/−2, 7 files) |
+| `331517e` | Record QA verification of the icon artwork change | `QA_REPORT.md` (+331) |
+
+Base: `e7b516b` (`e7b516ba633f5f77ecba21b6986e7e2e9265348c`, also `origin/main` at the
+time of writing). The QA addendum was kept in its own commit, matching the §8.1
+convention (source commit, then QA record). `git show 331517e:manifest.json` carries
+`action.default_icon` for 16/32/48/128 and `icons` for 16/32/48/128; all four icon
+paths exist in the committed tree. The bundle below points at `331517e`.
+
+### 9.2 Artifact A — `safeblock-extension.zip`
+
+| Field | Previous (stale) | Rebuilt (2026-11-24) |
+|---|---|---|
+| Size | 12,579 bytes | **16,101 bytes** |
+| SHA-256 | `5094a04305201020857dadc1f2a6deee9adcbc5cc400c085e49bd85fdb92ede8` | **`ab62095284ebcb9ebb5a618cc712db4684784d02e3e6c3153c127a340410530d`** |
+| Files in archive | 16 | **17** (`icons/icon32.png` added) |
+| `manifest.json` at zip root | yes (1,192 B, no `default_icon`) | yes (1,380 B, `default_icon` + `icons.32`) |
+| Zip integrity (`testzip()`) | clean | clean |
+| Directory entries / absolute or `./`/`..` paths | none | none |
+| Tracked by git | no (`*.zip` ignored) | no |
+
+The 17 entries, sorted by path, stored with `ZIP_DEFLATED`, timestamp
+`2026-11-21 00:00:00` and mode 0644 (unchanged recipe):
+
+```
+content/youtube.js
+icons/icon128.png
+icons/icon16.png
+icons/icon32.png
+icons/icon48.png
+lib/compat.js
+lib/rules.js
+lib/settings.js
+manifest.json
+options/options.css
+options/options.html
+options/options.js
+popup/popup.css
+popup/popup.html
+popup/popup.js
+rules/ads_trackers.json
+rules/adult_filter.json
+```
+
+Differences from the previous archive: the three existing icons were replaced
+(82/126/300 B → 326/781/1988 B), `icons/icon32.png` was added, and `manifest.json`
+changed (1,192 → 1,380 B). The other 12 entries — including `content/youtube.js`
+(`678242a5df6ddaddbabeb7be9d4e8c2c9a2604b4fb10525b7a60f3000625f61d`) — are
+byte-identical to the previous archive.
+
+Icon entries as stored in the archive:
+
+| Entry | Bytes | sha256 | Unique RGBA (non-flat) |
+|---|---|---|---|
+| `icons/icon16.png` | 326 | `4571aa833699bb60b001b1ec0eecb981c7baf1d78d136a5aa6aaf42960564234` | 30 |
+| `icons/icon32.png` | 557 | `c41a2491e4489ec4ae45179552d7f599fe093eebb404b058ba70e86258a82319` | 43 |
+| `icons/icon48.png` | 781 | `6c3eff8808d75bc9371b6ed818637f35570cd307ec6fb0cc95897601d8a4b592` | 43 |
+| `icons/icon128.png` | 1,988 | `eae0ed307681fc972b6f42596dd23a059e3fdda9ca3745ef4c643708cf9beedd` | 49 |
+
+`manifest.json` inside the archive is byte-identical to the working tree
+(sha256 `0a62833358864920114ab1c9a64df9d18166d7cf8b58dd7b91e10c88b0cead14`).
+
+Recipe proof: re-packing the pre-change commit `e7b516b` with the same recipe
+reproduces the previous archive exactly (12,579 bytes, sha256 `5094a043…`), and a
+second build of the current tree reproduces the new archive exactly
+(16,101 bytes, sha256 `ab620952…`). Build command (scratch builder kept outside the
+repository, as in §1):
+
+```
+python3 /tmp/build_zip.py /home/agentroost/safeblock /home/agentroost/safeblock/safeblock-extension.zip
+```
+
+### 9.3 Artifact B — `safeblock-main.bundle`
+
+| Field | Previous (stale) | Rebuilt (2026-11-24) |
+|---|---|---|
+| Size | 53,537 bytes | **72,911 bytes** |
+| SHA-256 | `7d7e5ed15b29fca4d5f39c86298b55e0310674fcbcd74db75a62aef998c604ac` | **`ab045d14f9e7ceb2c4a25b2a43ee0011c59328fcdfc7fee813ecaf5aa1b4a442`** |
+| `refs/heads/main` | `193108ce92509fa6de54663abea36eda5be8b962` | **`331517e8bf98fd30009d0f2d24e88c617952ff85`** |
+| Bundle integrity | complete history | **`git bundle verify`: okay, records a complete history** |
+
+```
+$ git bundle create safeblock-main.bundle refs/heads/main
+$ git bundle verify safeblock-main.bundle
+safeblock-main.bundle is okay
+The bundle contains this ref:
+331517e8bf98fd30009d0f2d24e88c617952ff85 refs/heads/main
+The bundle records a complete history.
+The bundle uses this hash algorithm: sha1
+```
+
+The bundle has no prerequisites and contains every commit reachable from `main` in
+this clone (all 8, back to `ad5d158`). It was cut from `331517e`, so it contains the
+icon commit `ed7b669` and the QA record. This addendum's commit follows the bundle
+and is therefore not inside it — a bundle cannot name the commit that records its
+hash.
+
+### 9.4 Verification performed
+
+Read-only checker: `python3 /tmp/verify_artifacts.py` (stdlib `zipfile` + its own PNG
+decoder, `zlib`/`struct`), run against the rebuilt archive and the working tree;
+exit 0, `ALL CHECKS PASSED`, 51 checks (0 failures).
+
+| Check | Result |
+|---|---|
+| `zipfile.testzip()` | `None` (clean) |
+| Entry count | 17 exactly, sorted by path |
+| Entry set equals the 17 extension runtime files | pass |
+| No directory entries; no absolute/`./`/`..` paths | 0 found |
+| No `tools/`, `.verify/`, `.git/`, `tmp/`, zip or bundle entries | 0 found |
+| `manifest.json` at archive root, no wrapper directory | yes |
+| Every entry byte-identical (sha256) to the working tree | 17/17 |
+| Fixed timestamp / `ZIP_DEFLATED` / mode 0644 on every entry | 17/17 each |
+| Archive `manifest.json`: `action.default_icon` 16/32/48/128 and `icons` 16/32/48/128 | pass |
+| All 8 manifest icon paths resolve inside the archive | 8/8 |
+| Four icons byte-identical to `icons/` on disk | 4/4 |
+| Four icons decode at their stated size, 8-bit RGBA | 16/32/48/128 px |
+| Four icons non-flat (unique colours > 4) | 30/43/43/49 |
+| Rebuild reproducibility | second build identical (`ab620952…`) |
+| Bundle verify | okay, complete history |
+| Bundle payload equals the source | scratch fetch from the bundle: tree listing identical to `331517e`, `manifest.json` identical, four icon sha256 identical, `tools/make_icons.py` identical (`7ce536a1…`) |
+| Negative control — previous archive (rebuilt from `e7b516b`) | 16 entries, no `icons/icon32.png`, each old icon 1 unique colour, manifest without `default_icon` → the new checks do fail on the stale artifact |
+| Negative control — previous bundle (re-cut at `193108c`) | reproduces the previous artifact byte-for-byte (53,537 B, `7d7e5ed1…`), so the recipe and the recorded hash are correct |
+
+### 9.5 Push and rollback
+
+* **No push.** `git ls-remote origin` (2026-11-24) still reports
+  `e7b516ba633f5f77ecba21b6986e7e2e9265348c` for `refs/heads/main`; local `main` is
+  ahead of it by the two commits above plus this addendum. §8.5 records a **one-time,
+  explicitly requested** push on 2026-11-22, not a standing convention that every
+  release commit is pushed, so this ticket committed only. Nothing was force-pushed,
+  rewritten or deleted.
+* **Rollback — artifacts only.** Neither artifact is tracked, so undo is a rebuild,
+  not a revert. The previous zip regenerates byte-for-byte from `e7b516b` with the
+  §8.2 recipe (`12,579 B`, `5094a043…`), and the previous bundle regenerates
+  byte-for-byte by re-cutting `refs/heads/main` at `193108c` (`53,537 B`,
+  `7d7e5ed1…`) — both reproduced during this verification. Positional note: after
+  this addendum `HEAD^` is `331517e`, which **already contains** the new icons and
+  rebuilds the **new** artifacts; the pre-change tip is `HEAD^^^` (`e7b516b`). No
+  commit has to be reverted to restore the old artifacts.
+* **Residual:** the workspace clone is shallow at `ad5d158` (the oldest commit in
+  this repository), so "complete history" means all commits reachable from `main`
+  here; the bundle records no prerequisites. The browser rendering check for the new
+  toolbar icons remains unexecuted in this environment (`QA_REPORT.md` §10).
