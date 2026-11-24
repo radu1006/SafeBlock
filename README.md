@@ -153,7 +153,7 @@ lib/rules.js             Maps settings to ruleset enable/disable via updateEnabl
 content/youtube.js       YouTube ad skipping, ad-slot hiding and in-feed/promoted card hiding (youtube.com only)
 popup/                   Toolbar popup: popup.html, popup.js, popup.css
 options/                 Options page: options.html, options.js, options.css
-icons/                   icon16.png, icon48.png, icon128.png
+icons/                   icon16.png, icon32.png, icon48.png, icon128.png; tools/make_icons.py regenerates them
 LICENSE                  Apache License 2.0
 QA_REPORT.md             Static QA verification report and defects found against 0.1.0
 SECURITY_REVIEW.md       Security and privacy review, with residual risk and release gate
