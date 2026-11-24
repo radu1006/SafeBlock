@@ -4,11 +4,13 @@
 //
 // Injected on YouTube pages only, and only while `adBlocking` is enabled in the
 // shared settings. It dismisses skippable ads, fast-forwards in-stream ad
-// videos where that is safe, and hides ad slots/overlays.
+// videos where that is safe, hides ad slots/overlays, and hides the first-party
+// feed tile that wraps an in-feed ad so no empty grid cell is left behind.
 //
 // The script is self-terminating: when `adBlocking` is switched off it clears
 // its pending timer, disconnects its MutationObserver, removes its injected
-// style and detaches its navigation listeners, so an idle page costs nothing.
+// style, strips its tile markers and detaches its navigation listeners, so an
+// idle page costs nothing.
 // One passive storage listener stays registered so the script can start again
 // if the user re-enables ad blocking.
 //
@@ -35,12 +37,38 @@
     "ytd-in-feed-ad-layout-renderer",
     "ytd-promoted-sparkles-web-renderer",
     "ytd-promoted-video-renderer",
+    // Watch-page sidebar, search-result text ads and search promoted-video
+    // ("pyv") units. These are ad renderers, not first-party content.
+    "ytd-compact-promoted-video-renderer",
+    "ytd-promoted-sparkles-text-search-renderer",
+    "ytd-search-pyv-renderer",
     "ytd-companion-slot-renderer",
     "ytd-banner-promo-renderer",
     "ytd-statement-banner-renderer",
     "ytd-brand-video-shelf-renderer",
     "#masthead-ad"
   ];
+  // Wrapper elements that hold a single grid/list cell. An in-feed ad slot is
+  // normally nested inside one of these, so hiding only the inner ad renderer
+  // leaves an empty cell. See hideAdTiles().
+  const TILE_WRAPPER_TAGS = [
+    "ytd-rich-item-renderer",
+    "ytd-rich-section-renderer",
+    "ytd-rich-grid-media",
+    "ytd-item-section-renderer"
+  ];
+  const TILE_MARKER_CLASS = "safeblock-hidden-tile";
+  const TILE_MARKER_SELECTOR = "." + TILE_MARKER_CLASS;
+  // Every element-name entry of HIDE_SELECTORS is an ad renderer and therefore
+  // a valid anchor for the wrapper pass; the id/class entries (#player-ads,
+  // .ytp-ad-module, ...) cover player and masthead units that never sit inside
+  // a feed cell.
+  const TILE_ANCHOR_SELECTORS = HIDE_SELECTORS.filter(function (selector) {
+    return selector.charAt(0) !== "." && selector.charAt(0) !== "#";
+  });
+  const TILE_ANCHOR_QUERY = TILE_ANCHOR_SELECTORS.join(", ");
+  const MAX_WRAPPER_DEPTH = 16;
+  const STYLE_SELECTORS = HIDE_SELECTORS.concat([TILE_MARKER_SELECTOR]);
   const STYLE_ID = "safeblock-youtube-ads";
   const DEBOUNCE_MS = 250;
   const CLICK_COOLDOWN_MS = 1000;
@@ -137,7 +165,7 @@
     }
     const style = document.createElement("style");
     style.id = STYLE_ID;
-    style.textContent = HIDE_SELECTORS.map(function (selector) {
+    style.textContent = STYLE_SELECTORS.map(function (selector) {
       return selector + " { display: none !important; }";
     }).join("\n");
     parent.appendChild(style);
@@ -151,6 +179,121 @@
     if (style && typeof style.remove === "function") {
       style.remove();
     }
+  }
+
+  // --- Feed tile wrappers ---------------------------------------------------
+  //
+  // Hiding an ad renderer inside `ytd-rich-item-renderer` removes the card but
+  // leaves the wrapper (and its grid cell) in place, which shows up as a blank
+  // tile. A CSS parent selector would be shorter, but the relational :has
+  // pseudo-class only shipped in Firefox 121 while manifest.json allows gecko
+  // strict_min_version 113.0, so such a rule would silently match nothing on
+  // Firefox 113-120. Instead the pass walks up to the nearest wrapper tag and
+  // marks it with a class hidden by the injected stylesheet. No inline
+  // element.style is used, so stop() can restore the page completely.
+
+  function hasTileMarker(element) {
+    if (!element || !element.classList ||
+        typeof element.classList.contains !== "function") {
+      return false;
+    }
+    try {
+      return element.classList.contains(TILE_MARKER_CLASS);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function addTileMarker(element) {
+    if (!element || !element.classList || hasTileMarker(element)) {
+      return;
+    }
+    if (typeof element.classList.add !== "function") {
+      return;
+    }
+    try {
+      // The guard above skips the write for an already marked tile, so a pass
+      // triggered by our own class mutation finds nothing to change and the
+      // observer feedback loop dies out after the first marking.
+      element.classList.add(TILE_MARKER_CLASS);
+    } catch (error) {
+      // Ignore a node whose class list cannot be written.
+    }
+  }
+
+  function removeTileMarker(element) {
+    if (!element || !element.classList ||
+        typeof element.classList.remove !== "function") {
+      return;
+    }
+    try {
+      element.classList.remove(TILE_MARKER_CLASS);
+    } catch (error) {
+      // Ignore a node whose class list cannot be written.
+    }
+  }
+
+  function isTileWrapper(element) {
+    if (!element) {
+      return false;
+    }
+    const name = element.localName || element.tagName;
+    if (!name) {
+      return false;
+    }
+    const tag = String(name).toLowerCase();
+    for (let index = 0; index < TILE_WRAPPER_TAGS.length; index += 1) {
+      if (tag === TILE_WRAPPER_TAGS[index]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Walk up from the ad renderer to the nearest feed cell wrapper. The depth cap
+  // keeps the pass cheap on deep pages and bounds the work per ad node.
+  function nearestTileWrapper(node) {
+    let current = node ? node.parentNode : null;
+    let depth = 0;
+    while (current && depth < MAX_WRAPPER_DEPTH) {
+      if (isTileWrapper(current)) {
+        return current;
+      }
+      current = current.parentNode;
+      depth += 1;
+    }
+    return null;
+  }
+
+  function containsAdRenderer(tile) {
+    if (!tile || typeof tile.querySelector !== "function") {
+      return true;
+    }
+    try {
+      return !!tile.querySelector(TILE_ANCHOR_QUERY);
+    } catch (error) {
+      return true;
+    }
+  }
+
+  // Idempotent: marking an already marked tile performs no DOM write. The prune
+  // step drops a stale marker when YouTube recycles a tile element for a normal
+  // video, so a reused cell cannot stay hidden.
+  function hideAdTiles() {
+    TILE_ANCHOR_SELECTORS.forEach(function (selector) {
+      each(selector, function (adNode) {
+        addTileMarker(nearestTileWrapper(adNode));
+      });
+    });
+    each(TILE_MARKER_SELECTOR, function (tile) {
+      if (!containsAdRenderer(tile)) {
+        removeTileMarker(tile);
+      }
+    });
+  }
+
+  function stripTileMarkers() {
+    each(TILE_MARKER_SELECTOR, removeTileMarker);
   }
 
   function observerTarget() {
@@ -211,6 +354,7 @@
     dismissAds();
     fastForwardAdVideos();
     injectStyle();
+    hideAdTiles();
     attachObserver();
   }
 
@@ -257,6 +401,9 @@
     }
     observedTarget = null;
     watchNavigation(false);
+    // Strip markers only after the observer is disconnected, so removing class
+    // attributes here cannot schedule another pass.
+    stripTileMarkers();
     removeStyle();
   }
 
