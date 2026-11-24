@@ -697,3 +697,334 @@ installing them would not get the in-feed/promoted ad fix. Both must be rebuilt 
 
 **The source change itself is PASS and approved to land.** No source-code defect was found; after the
 artifact rebuild, the pair is ready for the manual Chrome + Firefox YouTube smoke test.
+
+---
+
+## Addendum — 2026-11-24 — Icon artwork follow-up (QA_REPORT O5)
+
+**Scope.** Independent verification of the Developer's artwork change (`tkt_be15f144`, run
+`run_b49d3351`) against the QA ticket `tkt_2bcfb67d`. Every figure below was re-derived by QA from
+the bytes on disk with a decoder written for this check (`.verify/qa_icons.py`, `zlib` + `struct`
+only — `PIL` is **not** installed in this environment, so no third-party decoder was involved).
+Nothing in the Developer's report was taken on trust.
+
+**O5 (`QA_REPORT.md` §4, line 276) is CLOSED.** The icon set is no longer a flat single-colour fill.
+
+### 1. Verdict
+
+**PASS.** All seven acceptance checks pass, no defect is filed. Residual risk is limited to the
+browser rendering check, which this environment cannot run (see §10).
+
+| # | Acceptance check | Command / method | Observed | Result |
+|---|---|---|---|---|
+| 1 | Four icons decode as 16/32/48/128 px, 8-bit, colour type 6, IHDR first, all CRCs valid, full IDAT decode | `python3 .verify/qa_icons.py .` | 4/4 pass; 3 chunks each (IHDR/IDAT/IEND), 3/3 CRCs valid, exact inflated IDAT size | **PASS** |
+| 2 | Non-flat evidence per icon (unique colours, transparent share, dominant colour share); a flat fill must fail | same script, plus re-run on the `HEAD` icons as a negative control | unique 30/43/43/49; dominant `#1b5e20` 30.5/40.8/42.5/45.9 % (guard threshold 95 %); `HEAD` icons measured 100 % and **failed** the guard | **PASS** |
+| 3 | Old flat files replaced, not supplemented; four icons not byte-identical | `sha256sum icons/*.png`, `git show HEAD:icons/…` | 3 old files overwritten (82/126/300 B → 326/781/1988 B), `icon32.png` new; 4 distinct sha256 | **PASS** |
+| 4 | `manifest.json` parses; `action.default_icon` exactly 16/32/48/128, paths resolve; `icons` has 32; permissions unchanged; DNR/content_scripts/popup/options/version unchanged vs HEAD | `python3 .verify/qa_manifest.py .`, `python3 -m json.tool manifest.json`, `git diff manifest.json` | 5 added keys, 0 removed, 0 changed; 9 protected sections identical; `json.tool` exit 0 | **PASS** |
+| 5 | Every icon reference in manifest, `popup/`, `options/` resolves | `qa_manifest.py` reference walk | 8 manifest icon paths + 10 HTML/CSS/JS references all resolve; no `icons/` path hard-coded outside the manifest | **PASS** |
+| 6 | `tools/make_icons.py` is stdlib-only and reproduces the shipped icons byte-for-byte in a temp dir | AST import scan vs `sys.stdlib_module_names`; run copied script in `tmp/qa_icons_repro/` | imports `math`, `os`, `struct`, `zlib` (all stdlib); 4/4 sha256 identical; two runs identical | **PASS** |
+| 7 | Scope: only `manifest.json`, `README.md`, `icons/`, `tools/make_icons.py`; runtime dirs and artifacts untouched | `git status --porcelain`, `git diff --stat`, `git diff --name-only -- content lib popup options rules` | exactly those paths; runtime dirs empty diff; stale artifacts are the known release item | **PASS** |
+
+### 2. Icon decode — size, format, chunks
+
+`python3 .verify/qa_icons.py .` (exit 0, 0 failures). Each file: PNG signature `89 50 4E 47 0D 0A 1A 0A`,
+chunk order `IHDR IDAT IEND` (IHDR first, IEND last), colour type 6, bit depth 8, compression 0,
+filter 0, interlace 0, every chunk CRC recomputed and matching, and the IDAT zlib stream inflated to
+exactly `height × (1 + 4 × width)` bytes with all five PNG filter types implemented in the decoder.
+
+| File | Bytes | Dimensions | IHDR | Chunks / CRCs | Inflated IDAT | sha256 |
+|---|---|---|---|---|---|---|
+| `icons/icon16.png` | 326 | 16×16 | 8-bit, type 6 | 3 / 3 valid | 1040 B | `4571aa833699bb60b001b1ec0eecb981c7baf1d78d136a5aa6aaf42960564234` |
+| `icons/icon32.png` | 557 | 32×32 | 8-bit, type 6 | 3 / 3 valid | 4128 B | `c41a2491e4489ec4ae45179552d7f599fe093eebb404b058ba70e86258a82319` |
+| `icons/icon48.png` | 781 | 48×48 | 8-bit, type 6 | 3 / 3 valid | 9264 B | `6c3eff8808d75bc9371b6ed818637f35570cd307ec6fb0cc95897601d8a4b592` |
+| `icons/icon128.png` | 1988 | 128×128 | 8-bit, type 6 | 3 / 3 valid | 65664 B | `eae0ed307681fc972b6f42596dd23a059e3fdda9ca3745ef4c643708cf9beedd` |
+
+No ancillary chunks are present (no `tEXt`, `pHYs`, `iCCP`), so nothing but geometry and pixels is
+shipped. The four sha256 values are pairwise distinct, and no file matches any other: these are four
+independent renders, not one bitmap copied to four names.
+
+### 3. Non-flat evidence
+
+Rule applied: a flat fill would show one unique colour covering ~100 % of pixels. The guard fails any
+icon whose dominant non-transparent colour reaches ≥ 95 % of **all** pixels.
+
+| Icon | Unique RGBA | Unique RGB | Fully transparent | Anti-aliased edge px | Dominant RGB | Share of all px | Guard |
+|---|---|---|---|---|---|---|---|
+| `icon16.png` | 30 | 22 | 32/256 = 12.5 % | 46 | `#1b5e20` | 78/256 = **30.5 %** | OK |
+| `icon32.png` | 43 | 28 | 158/1024 = 15.4 % | 88 | `#1b5e20` | 418/1024 = **40.8 %** | OK |
+| `icon48.png` | 43 | 29 | 434/2304 = 18.8 % | 76 | `#1b5e20` | 980/2304 = **42.5 %** | OK |
+| `icon128.png` | 49 | 33 | 3150/16384 = 19.2 % | 340 | `#1b5e20` | 7513/16384 = **45.9 %** | OK |
+
+Palette composition (exact colours only; `other` is the anti-aliased blend band):
+
+| Icon | `#1b5e20` green | `#0f3d14` rim | white mark | other | clear |
+|---|---|---|---|---|---|
+| 16 px | 30.5 % | 12.5 % | 15.6 % (40 px) | 28.9 % | 12.5 % |
+| 32 px | 40.8 % | 10.9 % | 19.0 % (195 px) | 13.8 % | 15.4 % |
+| 48 px | 42.5 % | 8.3 % | 19.4 % (448 px) | 10.9 % | 18.8 % |
+| 128 px | 45.9 % | 10.9 % | 20.7 % (3388 px) | 3.4 % | 19.2 % |
+
+The brand green is still the dominant single colour (so the toolbar identity is unchanged), but it
+covers less than half of every canvas: **the icons are artwork, not placeholders.** The small-size
+"other" share (28.9 % at 16 px) is the expected anti-aliasing cost of a 1 px rim plus a diagonal bar
+on a 16×16 canvas.
+
+**Negative control (the check can fail).** The pre-change blobs were extracted with
+`git show HEAD:icons/icon{16,48,128}.png > .verify/old_icons/…` and decoded with the same code:
+
+| HEAD icon | Bytes | Unique colours | Dominant colour | Share | Guard |
+|---|---|---|---|---|---|
+| `icon16.png` | 82 | 1 | `#1b5e20` | 256/256 = 100.0 % | **FAIL** |
+| `icon48.png` | 126 | 1 | `#1b5e20` | 2304/2304 = 100.0 % | **FAIL** |
+| `icon128.png` | 300 | 1 | `#1b5e20` | 16384/16384 = 100.0 % | **FAIL** |
+
+`icons/icon32.png` has no `HEAD` entry at all (`git cat-file -e HEAD:icons/icon32.png` → *exists on
+disk, but not in HEAD*). So the three old flat files were **replaced** (same paths, new bytes,
+new sizes) and the 32 px file is genuinely new — the set was not supplemented with a fourth blob
+beside the old ones.
+
+### 4. ASCII previews and legibility at 16 px
+
+`python3 .verify/qa_icons.py .`, preview drawn from the decoded pixels (`@` = white block mark,
+`#` = brand green, `+` = dark rim `#0f3d14`, `.` = transparent).
+
+```
+  icon16.png (16x16)                    icon32.png (32x32)
+  .++++++++++++++.                      ...++++++++++++++++++++++++++...
+  +##############+                      ..++########################++..
+  +##############+                      .++##########################++.
+  +####@@@@@#####+                      .+############################+.
+  +###@@@@@######+                      .+############################+.
+  +###@@@@###@###+                      .+##########@@@@@@@@##########+.
+  +###@@@###@@###+                      .+########@@@@@@@@@@@#########+.
+  +###@@###@@@###+                      .+#######@@@@@@@@@@@##########+.
+  +###@###@@@@###+                      .+######@@@@@@@@@@@###########+.
+  +######@@@@@###+                      .+######@@@@@@@@@@############+.
+  .+####@@@@@###+.                      .+#####@@@@@@@@@@######@@#####+.
+  ..############..                      .+#####@@@@@@@@@######@@@#####+.
+  ...+########+...                      .+#####@@@@@@@@######@@@@#####+.
+  ....+######+....                      .+#####@@@@@@@######@@@@@#####+.
+  .....+####+.....                      .+#####@@@@@@######@@@@@@#####+.
+  .......++.......                      .+#####@@@@@######@@@@@@@#####+.
+                                        .+#####@@@@######@@@@@@@@#####+.
+                                        .+#####@@@######@@@@@@@@@#####+.
+                                        .+######@######@@@@@@@@@######+.
+                                        .+############@@@@@@@@@@######+.
+                                        .++##########@@@@@@@@@@######++.
+                                        ..++########@@@@@@@@@@######++..
+                                        ...+########@@@@@@@@########+...
+                                        ....+######################+....
+                                        .....++##################++.....
+                                        ......++################++......
+                                        .......++##############++.......
+                                        .........+############+.........
+                                        ..........++########++..........
+                                        ...........++######++...........
+                                        .............++##++.............
+                                        ..............++++..............
+```
+
+**Judgement, stated explicitly:**
+
+* **Shield silhouette — legible at 16 px.** Yes. Rounded shoulders, full-width body for the upper
+  two thirds, an even taper to a single-pixel tip on the last row, and a darker rim (`#0f3d14`,
+  0.035 of the canvas — sub-pixel at 16 px, so it reads as the outermost pixel ring) that separates
+  it from a light or dark toolbar. The shape is unmistakable at 16×16 and matches the 128 px render
+  (normalised ink box 0.02–0.98 wide at 48/128 px, full-bleed at 16/32 px).
+* **White block mark — legible at 16 px.** Yes, with a caveat worth recording rather than filing:
+  the mark reads as a white disc split by a diagonal slash (the "no entry" idiom). At 16 px the
+  mark's bounding box is 8×8 px (half the canvas) and the green slash through it is 3 px wide, so the
+  two white lobes are only ~4–5 px each; at 32 px the box is 18×18 px and the slash 6 px. It is
+  recognisable as a blocked/prohibited mark at 100 % zoom, but it is coarse — the small-size
+  reading is "white mark on a green shield" more than a crisp icon glyph.
+  That is a normal 16 px trade-off, not a defect, and it is decisively no longer a plain green square.
+* **Design consistency across sizes.** The white mark's normalised centre is identical at all four
+  sizes — (0.500, 0.438) — and the mark box grows only slightly with resolution
+  (0.500 / 0.562 / 0.583 / 0.594 of the canvas at 16/32/48/128). One design, four renders.
+
+### 5. `manifest.json`
+
+`python3 -m json.tool manifest.json` → **exit 0** (66 pretty-printed lines, empty stderr).
+`python3 .verify/qa_manifest.py .` → **exit 0**, 0 failures.
+
+`git diff manifest.json` — the complete change (one hunk, +8/−1; `git diff --stat` prints 9 as the total changed lines):
+
+```diff
+@@ -35,13 +35,20 @@
+     }
+   ],
+   "action": {
+-    "default_popup": "popup/popup.html"
++    "default_popup": "popup/popup.html",
++    "default_icon": {
++      "16": "icons/icon16.png",
++      "32": "icons/icon32.png",
++      "48": "icons/icon48.png",
++      "128": "icons/icon128.png"
++    }
+   },
+   "options_ui": {
+     "page": "options/options.html"
+   },
+   "icons": {
+     "16": "icons/icon16.png",
++    "32": "icons/icon32.png",
+     "48": "icons/icon48.png",
+     "128": "icons/icon128.png"
+   },
+```
+
+Structural comparison of the flattened objects (not just the textual diff):
+
+* **added (5):** `action.default_icon.16`, `.32`, `.48`, `.128`, `icons.32`.
+* **removed (0), changed values (0).**
+* **Protected sections identical to HEAD** (key-order-normalised structural compare, not text):
+  `manifest_version`, `name`, `version`,
+  `description`, `declarative_net_request` (both rulesets, ids, `enabled` flags, paths),
+  `content_scripts` (YouTube-only entry, js list, `document_idle`), `options_ui`,
+  `browser_specific_settings`, `action.default_popup`.
+* **Permissions:** `["declarativeNetRequest", "storage"]` — unchanged, still exactly two; no
+  `host_permissions` key was introduced.
+
+Path resolution — 8/8 manifest icon references exist on disk:
+
+| Key | Path | Resolves |
+|---|---|---|
+| `action.default_icon.16` / `icons.16` | `icons/icon16.png` | yes |
+| `action.default_icon.32` / `icons.32` | `icons/icon32.png` | yes |
+| `action.default_icon.48` / `icons.48` | `icons/icon48.png` | yes |
+| `action.default_icon.128` / `icons.128` | `icons/icon128.png` | yes |
+
+`popup/` and `options/` were walked for `url(...)` and `src=`/`href=` references: 10 local references
+(`popup.css`, `options.css`, `../lib/compat.js`, `../lib/settings.js`, `../lib/rules.js`,
+`popup.js`, `options.js`) all resolve, and **no** popup/options asset hard-codes an `icons/` path, so
+the manifest is the single source of truth for icon wiring.
+
+Negative control for the manifest checker: a copy of the tree in `tmp/neg/` with
+`action.default_icon.32` pointed at `icons/icon32-missing.png` produced
+`FAIL: action.default_icon[32] -> icons/icon32-missing.png does not resolve` and **exit 1** — the
+path-resolution check is live, not vacuous. (Note the honest limitation: a value changed *inside a
+key that did not exist at HEAD* cannot be caught by the HEAD structural diff — it shows up as
+"added"; the path-resolution check is what guards those values.)
+
+### 6. `tools/make_icons.py`
+
+* **Imports** (`grep -nE '^\s*(import|from)\s' tools/make_icons.py`): `math`, `os`, `struct`, `zlib`.
+  Checked against `sys.stdlib_module_names`: all four stdlib, **non-stdlib imports: none**. No
+  `subprocess`, `socket`, `urllib`, `eval`, `exec`, `os.system` or network reference appears in the
+  file.
+* **Byte-for-byte reproduction into a temp directory** (the shipped `icons/` was not touched; mtimes
+  stayed at 19:06 and the hashes after the run still match §2):
+
+```
+rm -rf tmp/qa_icons_repro && mkdir -p tmp/qa_icons_repro/tools
+cp tools/make_icons.py tmp/qa_icons_repro/tools/
+cd tmp/qa_icons_repro && python3 tools/make_icons.py
+# wrote icons/icon16.png (326 bytes) / icon32.png (557) / icon48.png (781) / icon128.png (1988)
+```
+
+| Icon | Shipped sha256 | Reproduced sha256 | Match |
+|---|---|---|---|
+| `icon16.png` | `4571aa83…4234` | `4571aa83…4234` | identical |
+| `icon32.png` | `c41a2491…2319` | `c41a2491…2319` | identical |
+| `icon48.png` | `6c3eff88…b592` | `6c3eff88…b592` | identical |
+| `icon128.png` | `eae0ed30…eadd` | `eae0ed30…eadd` | identical |
+
+* **Determinism:** a second run in the same temp dir reproduced the same four hashes
+  (`diff tmp/repro_run1.sha tmp/repro_run2.sha` → no output). The generator is deterministic, so the
+  committed PNGs can be regenerated by anyone without producing spurious diffs.
+
+### 7. Scope
+
+`git status --porcelain`:
+
+```
+ M README.md
+ M icons/icon128.png
+ M icons/icon16.png
+ M icons/icon48.png
+ M manifest.json
+?? icons/icon32.png
+?? tools/
+```
+
+`git diff --stat`: 5 tracked files, `9 insertions(+), 2 deletions(-)` (`README.md` +1/−1 in the file
+map, the three PNGs binary, `manifest.json` +8/−1). The one `README.md` hunk updates the file map to
+`icon16.png, icon32.png, icon48.png, icon128.png; tools/make_icons.py regenerates them` — accurate.
+`git diff --name-only -- content lib popup options rules` → **empty**: no runtime source changed.
+`icons/` holds exactly the four PNGs; `tools/` holds exactly `make_icons.py`.
+
+**Stale packaged artifacts — expected-pending, not a new defect.** `safeblock-extension.zip`
+(12,579 B, sha256 `5094a04305201020857dadc1f2a6deee9adcbc5cc400c085e49bd85fdb92ede8`) and
+`safeblock-main.bundle` (53,537 B, sha256 `7d7e5ed15b29fca4d5f39c86298b55e0310674fcbcd74db75a62aef998c604ac`)
+both date from 2026-11-22 12:59 and are gitignored by design. The zip still carries the **old flat
+icons** (82/126/300 B, matching the `HEAD` blobs), has **no** `icons/icon32.png`, and its
+`manifest.json` has `action = {"default_popup": …}` with no `default_icon`. This is exactly the
+work already queued for the Release Engineer in `tkt_9dc31de9` — no defect is filed here, but the
+release rebuild must:
+(1) add `icons/icon32.png` to the archive (16 → 17 entries) **and** ship the new 16/48/128 renders;
+(2) **exclude** `tools/make_icons.py` (build tooling, not extension runtime) as it already excludes
+`.verify/`, `tmp/` and the workspace documents.
+
+### 8. QA-added files
+
+All are inside the gitignored `.verify/` and `tmp/` scratch paths (`.gitignore`: `.verify/`, `/tmp/`), so
+the source tree under review is untouched by QA — the only QA edit to a tracked file is this
+`QA_REPORT.md` addendum:
+
+| Path | Purpose |
+|---|---|
+| `.verify/qa_icons.py` | Independent PNG decoder + non-flat guard + previews (§2–§4) |
+| `.verify/qa_manifest.py` | Manifest structure/path/permission checks vs HEAD (§5) |
+| `.verify/decode_one.py` | Small helper used to decode the `HEAD` blobs for the negative control |
+| `.verify/qa_icons.out`, `.verify/qa_manifest.out` | Captured output of the two runs above |
+| `.verify/old_icons/icon{16,48,128}.png` | `git show HEAD:…` blobs, negative-control input |
+| `tmp/qa_icons_repro/`, `tmp/out/` | Temp reproduction output (regenerated from a copy of the script) and node harness logs; the `tmp/neg/` manifest negative-control copy was deleted after the run |
+
+### 9. Broader checks re-run after the change
+
+The four existing `.verify` harnesses were re-run against the new manifest; all still pass and print
+`all checks passed`:
+
+| Harness | Exit |
+|---|---|
+| `node .verify/check_amo_manifest.js` | 0 |
+| `node .verify/check_scope.js` | 0 |
+| `node .verify/check_resource_types.js` | 0 |
+| `node .verify/check_youtube_feed.js` | 0 |
+
+### 10. Residual risks / not verified
+
+* **No browser in this environment** (carried over from O4). Actual toolbar rendering — Firefox's
+  pick of the 16/32 px asset when pinned, Chrome's HiDPI 32 px selection, and appearance against a
+  light vs dark theme — is verified **statically only**. The manifest wiring is correct on paper and
+  every referenced file exists in the tree; only a UI smoke test can confirm the pinned icon no
+  longer looks like a green square.
+* The packaged artifacts still contain the old icons until `tkt_9dc31de9` rebuilds them, so
+  *installed-from-zip* users would still see the flat square in the meantime.
+* `tools/make_icons.py` writes to `<repo>/icons` unconditionally (no `--out` flag). Running it in
+  place is proven idempotent (identical sha256), so it cannot silently drift the committed PNGs, but
+  it is a build step a contributor can trigger unintentionally.
+* Legibility at 16 px is a judgement call recorded in §4: shield yes, block mark yes-but-coarse. If
+  the mark were judged too small for store artwork, the design change would be a product decision,
+  not a QA defect.
+
+### 11. QA self-review
+
+* **Diff reviewed:** `manifest.json` (one hunk, +8/−1), `README.md` (one line), three replaced PNGs
+  (binary) and two new files (`icons/icon32.png`, `tools/make_icons.py`). Nothing else in the tree
+  changed; no runtime source, rules, popup, options or lib file was touched.
+* **No secrets, no debug output, no network code** in `make_icons.py`; the only output is the
+  four `wrote …` progress lines on stdout.
+* **No test was weakened:** the `HEAD` icon set still *fails* the flat-fill guard under the same
+  code (§3), and the manifest checker was shown to fail on a bad path (§5).
+* **Commands re-run after the last edit:** `python3 .verify/qa_icons.py .`,
+  `python3 .verify/qa_manifest.py .`, the four `node .verify/check_*.js` harnesses, and the
+  temp-dir reproduction; all recorded above with exit codes.
+
+### 12. O5 status
+
+**O5 — CLOSED (2026-11-24).** The placeholder flat `#1b5e20` set has been replaced by generated
+shield artwork with a white block mark, at 16/32/48/128 px, wired through both `action.default_icon`
+and top-level `icons`. No defect filed. The only open follow-up is the Release Engineer's artifact
+rebuild (`tkt_9dc31de9`), which must add `icons/icon32.png` to the zip and exclude `tools/`.
