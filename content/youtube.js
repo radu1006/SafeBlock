@@ -5,7 +5,10 @@
 // Injected on YouTube pages only, and only while `adBlocking` is enabled in the
 // shared settings. It dismisses skippable ads, fast-forwards in-stream ad
 // videos where that is safe, hides ad slots/overlays, and hides the first-party
-// feed tile that wraps an in-feed ad so no empty grid cell is left behind.
+// feed tile that wraps an in-feed ad so no empty grid cell is left behind. A
+// tile that is a multi-item container (a search result list, a feed section) is
+// only hidden while the ad is all it holds, so first-party content next to an
+// ad is never taken with it.
 //
 // The script is self-terminating: when `adBlocking` is switched off it clears
 // its pending timer, disconnects its MutationObserver, removes its injected
@@ -48,15 +51,33 @@
     "ytd-brand-video-shelf-renderer",
     "#masthead-ad"
   ];
-  // Wrapper elements that hold a single grid/list cell. An in-feed ad slot is
-  // normally nested inside one of these, so hiding only the inner ad renderer
-  // leaves an empty cell. See hideAdTiles().
+  // Wrapper elements a feed ad sits inside. ytd-rich-item-renderer is a single
+  // grid cell; the other two are containers of many items. Hiding only the inner
+  // ad renderer leaves an empty cell, so the wrapper is collapsed instead. The
+  // removed ytd-rich-grid-media is first-party card markup: it sits *inside* a
+  // cell, so stopping there left the outer cell visible. See hideAdTiles().
   const TILE_WRAPPER_TAGS = [
     "ytd-rich-item-renderer",
     "ytd-rich-section-renderer",
-    "ytd-rich-grid-media",
     "ytd-item-section-renderer"
   ];
+  // The wrapper tags above that hold many items rather than a single cell: a
+  // search-result list or a home-feed section. Marking one of these hides every
+  // result in it, so a container is only hidden while the ad is all it holds.
+  const TILE_CONTAINER_TAGS = [
+    "ytd-rich-section-renderer",
+    "ytd-item-section-renderer"
+  ];
+  // First-party renderers that share a container with an ad on real YouTube.
+  // If a container holds any of them, it is left visible and the ad renderer's
+  // own rule does the hiding.
+  const FIRST_PARTY_CONTENT_SELECTOR = [
+    "ytd-video-renderer",
+    "ytd-rich-grid-media",
+    "ytd-compact-video-renderer",
+    "ytd-shelf-renderer",
+    "ytd-grid-video-renderer"
+  ].join(", ");
   const TILE_MARKER_CLASS = "safeblock-hidden-tile";
   const TILE_MARKER_SELECTOR = "." + TILE_MARKER_CLASS;
   // Every element-name entry of HIDE_SELECTORS is an ad renderer and therefore
@@ -250,6 +271,23 @@
     return false;
   }
 
+  function isTileContainer(element) {
+    if (!element) {
+      return false;
+    }
+    const name = element.localName || element.tagName;
+    if (!name) {
+      return false;
+    }
+    const tag = String(name).toLowerCase();
+    for (let index = 0; index < TILE_CONTAINER_TAGS.length; index += 1) {
+      if (tag === TILE_CONTAINER_TAGS[index]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Walk up from the ad renderer to the nearest feed cell wrapper. The depth cap
   // keeps the pass cheap on deep pages and bounds the work per ad node.
   function nearestTileWrapper(node) {
@@ -276,17 +314,48 @@
     }
   }
 
+  // A container can host first-party results next to an ad. Hiding it then
+  // hides content the user asked for, so containers get a stricter rule than a
+  // single cell: see shouldHideTile().
+  function containsFirstPartyContent(tile) {
+    if (!tile || typeof tile.querySelector !== "function") {
+      return false;
+    }
+    try {
+      return !!tile.querySelector(FIRST_PARTY_CONTENT_SELECTOR);
+    } catch (error) {
+      return true;
+    }
+  }
+
+  // A cell wrapper may be hidden once it holds an ad renderer. A container
+  // wrapper may only be hidden while the ad is its only content; otherwise the
+  // ad renderer's own rule hides the ad and the container stays visible.
+  function shouldHideTile(tile) {
+    if (!containsAdRenderer(tile)) {
+      return false;
+    }
+    if (!isTileContainer(tile)) {
+      return true;
+    }
+    return !containsFirstPartyContent(tile);
+  }
+
   // Idempotent: marking an already marked tile performs no DOM write. The prune
   // step drops a stale marker when YouTube recycles a tile element for a normal
-  // video, so a reused cell cannot stay hidden.
+  // video, or adds first-party content next to the ad in a shared container, so
+  // a reused cell or container cannot stay hidden.
   function hideAdTiles() {
     TILE_ANCHOR_SELECTORS.forEach(function (selector) {
       each(selector, function (adNode) {
-        addTileMarker(nearestTileWrapper(adNode));
+        const wrapper = nearestTileWrapper(adNode);
+        if (wrapper && shouldHideTile(wrapper)) {
+          addTileMarker(wrapper);
+        }
       });
     });
     each(TILE_MARKER_SELECTOR, function (tile) {
-      if (!containsAdRenderer(tile)) {
+      if (!shouldHideTile(tile)) {
         removeTileMarker(tile);
       }
     });

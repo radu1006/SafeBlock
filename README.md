@@ -8,7 +8,7 @@ adult content filter.
 There is no background page, no remote code, no telemetry and no logging: the
 extension ships two static JSON rule lists and two settings booleans.
 
-> **Status:** early development (`0.1.0`). The extension is loaded unpacked or as
+> **Status:** early development (`0.1.1`). The extension is loaded unpacked or as
 > a temporary add-on; nothing is published to the Chrome Web Store or to
 > addons.mozilla.org. See [Known issues](#known-issues-and-residual-risks) and
 > [`QA_REPORT.md`](QA_REPORT.md) before relying on it.
@@ -23,7 +23,7 @@ Licensed under the [Apache License 2.0](LICENSE) · source:
 | Feature | How it works | Default |
 |---|---|---|
 | Ad and tracker blocking | Static `declarativeNetRequest` ruleset `ads_trackers` (`rules/ads_trackers.json`, 109 rules) blocks known ad/tracker domains for main frames, sub-frames, scripts, images and XHR. | **On** |
-| YouTube ad handling | Content script `content/youtube.js` on `*.youtube.com` and `m.youtube.com` clicks skip buttons, seeks in-stream ad videos to their end, and hides ad slots: player-area units plus in-feed, shelf and masthead sponsored cards. Runs only while ad blocking is on. | Follows ad blocking |
+| YouTube ad handling | Content script `content/youtube.js` on `*.youtube.com` and `m.youtube.com` clicks skip buttons, seeks in-stream ad videos to their end, and hides ad slots: player-area units plus in-feed, shelf, sidebar, search and masthead sponsored cards. An ad inside a feed cell also tags the enclosing tile wrapper (`ytd-rich-item-renderer`, `ytd-rich-section-renderer`, `ytd-rich-grid-media` or `ytd-item-section-renderer`) with `safeblock-hidden-tile`, so the grid cell is hidden with the ad instead of staying as a blank gap. Runs only while ad blocking is on. | Follows ad blocking |
 | Adult content filter | Second static ruleset `adult_filter` (`rules/adult_filter.json`, 181 rules) blocks known adult domains. Disabled in the manifest and off in settings until the user turns it on. | **Off (opt-in)** |
 
 The adult filter is **never enabled automatically**. Its ruleset ships with
@@ -155,7 +155,7 @@ popup/                   Toolbar popup: popup.html, popup.js, popup.css
 options/                 Options page: options.html, options.js, options.css
 icons/                   icon16.png, icon32.png, icon48.png, icon128.png; tools/make_icons.py regenerates them
 LICENSE                  Apache License 2.0
-QA_REPORT.md             Static QA verification report and defects found against 0.1.0
+QA_REPORT.md             Static QA verification report and defects found against 0.1.1
 SECURITY_REVIEW.md       Security and privacy review, with residual risk and release gate
 RELEASE_REPORT.md        Packaging report: artifact hash, git commit, checks, rollback
 ```
@@ -239,17 +239,32 @@ Then reload the extension (see below) so the new ruleset is read.
   `.ad-interrupting video`, `.ytp-ad-module`, `ytd-ad-slot-renderer`, …). If
   YouTube renames or restructures them, ad handling silently stops while domain
   blocking keeps working.
-- **In-feed ad hiding is cosmetic, best-effort DOM filtering.** In-feed, shelf and
-  masthead sponsored cards are hidden by an injected `display: none` style that
-  matches YouTube's current custom elements: `ytd-ad-slot-renderer`,
+- **In-feed ad hiding is cosmetic, best-effort DOM filtering.** Sponsored cards
+  are hidden by an injected `display: none` style that matches YouTube's current
+  custom elements: player-area units (`#player-ads`,
+  `.ytp-ad-overlay-container`, `ytd-display-ad-renderer`, `.ytp-ad-module`) and
+  in-feed, shelf, sidebar, search and masthead units (`ytd-ad-slot-renderer`,
   `ytd-in-feed-ad-layout-renderer`, `ytd-promoted-sparkles-web-renderer`,
-  `ytd-promoted-video-renderer`, `ytd-companion-slot-renderer`,
-  `ytd-banner-promo-renderer`, `ytd-statement-banner-renderer`,
-  `ytd-brand-video-shelf-renderer` and `#masthead-ad`. A renamed or obfuscated
+  `ytd-promoted-video-renderer`, `ytd-compact-promoted-video-renderer`,
+  `ytd-promoted-sparkles-text-search-renderer`, `ytd-search-pyv-renderer`,
+  `ytd-companion-slot-renderer`, `ytd-banner-promo-renderer`,
+  `ytd-statement-banner-renderer`, `ytd-brand-video-shelf-renderer` and
+  `#masthead-ad`). Hiding only the inner renderer would leave the card's grid
+  cell in place, so the script also walks up to the nearest enclosing tile
+  wrapper (`ytd-rich-item-renderer`, `ytd-rich-section-renderer`,
+  `ytd-rich-grid-media` or `ytd-item-section-renderer`) and tags it with
+  `safeblock-hidden-tile`, which the same stylesheet hides; the tag is removed
+  again if the tile no longer holds an ad renderer. The walk stops at the first
+  matching tag, so which element is hidden depends on how YouTube nests the ad
+  renderer. A CSS parent selector would be shorter, but `:has()` only shipped
+  in Firefox 121 while the manifest allows Firefox 113.0, so a `:has()` rule
+  would silently match nothing on Firefox 113–120. A renamed or obfuscated
   renderer silently stops matching, and these are first-party ads served from
   YouTube's own domain, so the network-level `declarativeNetRequest` rulesets
-  cannot cover them. The script re-applies the style on YouTube's SPA navigation,
-  but it never guarantees that every sponsored card is removed.
+  cannot cover them. The script re-applies the
+  style on YouTube's SPA navigation, but it never guarantees that every
+  sponsored card is removed. Hiding is checked against a stub DOM only; no
+  live-browser YouTube test is recorded.
 - **Unpacked extension needs reloading after code changes.** After editing JS,
   HTML, CSS or rules, click the reload button on the SafeBlock card in
   `chrome://extensions`; in Firefox, remove and re-add the temporary add-on.
@@ -266,16 +281,32 @@ Then reload the extension (see below) so the new ruleset is read.
 
 - **Not exercised in a browser.** All of the verification recorded in
   [`QA_REPORT.md`](QA_REPORT.md) and [`SECURITY_REVIEW.md`](SECURITY_REVIEW.md)
-  is static: no Chrome or Firefox run is recorded. Loading the unpacked
-  extension and confirming that a known ad domain is blocked is still required
-  before release.
+  is static: no Chrome or Firefox run is recorded. The YouTube tile hiding has
+  been exercised only against a stub DOM built from the renderer names in
+  `content/youtube.js`, never against live youtube.com. Loading the unpacked
+  extension and confirming that a known ad domain is blocked and that a
+  sponsored feed tile disappears is still required before release.
+- **The wrapper pass can hide too much or too little.** It marks the
+  nearest tag from its list, and `ytd-item-section-renderer` and
+  `ytd-rich-section-renderer` can also hold ordinary search results or shelves,
+  so a container that mixes an ad with first-party items can be hidden in full.
+  The reverse can happen too: an ad nested inside `ytd-rich-grid-media` stops
+  the walk at that card and leaves the outer `ytd-rich-item-renderer` cell
+  visible. The stub DOM reproduces both mechanisms; whether live YouTube nests
+  ads that way is unverified, and the risk is recorded in
+  [`QA_REPORT.md`](QA_REPORT.md).
+- **Matching is by element name only, with no badge or text heuristic.** A
+  renamed or obfuscated renderer is silently missed rather than hidden twice, so
+  a new variant has to be added to `HIDE_SELECTORS` (or to the tile wrapper
+  list) by hand; nothing inspects a card for a "Sponsored" label before hiding
+  it.
 - **Adult filter false positives (L3).** The opt-in list blocks whole domains
   with no per-site allowlist, including mixed-use hosts such as `nifty.org`, so
   a false positive can only be undone by turning the whole filter off. The list
   is a curated static snapshot, last reviewed 2026-11-21; its provenance is not
   recorded per entry.
-- **The review documents describe 0.1.0 as reviewed, not as shipped here.** The
-  findings QA and the security review filed against that snapshot — the
+- **The review documents describe an earlier reviewed snapshot, not this tree.**
+  The findings QA and the security review filed against that snapshot — the
   `<all_urls>` content script (H1/O1), the duplicate `lib/settings.js` injection
   (D1/M1), `||facebook.com/tr` (D2/L2), the missing `strict_min_version`
   (D3/I2) and the missing `ping`/`object`/`other` resource types (L1) — are

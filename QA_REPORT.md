@@ -1028,3 +1028,408 @@ The four existing `.verify` harnesses were re-run against the new manifest; all 
 shield artwork with a white block mark, at 16/32/48/128 px, wired through both `action.default_icon`
 and top-level `icons`. No defect filed. The only open follow-up is the Release Engineer's artifact
 rebuild (`tkt_9dc31de9`), which must add `icons/icon32.png` to the zip and exclude `tools/`.
+
+---
+
+## Addendum — 2026-11-24 — Whole-tile sponsored ad hiding (QA verification)
+
+Ticket: `tkt_2f539c62-89ef-4849-a278-4e5c370d9231` (QA verification of whole-tile sponsored ad hiding)
+Change under test: `tkt_51cb2776-2eb2-4f13-80bd-b7b598cdbf5a` (Developer, "Hide whole YouTube sponsored feed
+tiles"), committed as `2a48baf Block sponsored tiles in youtube` (SafeBlock Release Engineer,
+2026-11-24 19:19). The ticket assumed the change was an uncommitted working-tree edit; it is committed,
+so `HEAD` **is** the post-change tree and the pre-change script is `HEAD~1`, not `HEAD` (see §2.2).
+Environment: Linux, Node v22.23.5, Python 3.12.3, workspace `/home/agentroost/safeblock`.
+Method: QA-owned harnesses in `.verify/` (gitignored). They boot the real
+`lib/compat.js` + `lib/settings.js` + `content/youtube.js` chain in `node:vm` against a stub YouTube
+tree, then **evaluate the injected stylesheet by real selector matching** (tag / `#id` / `.class` /
+descendant), never by substring. The matcher *throws* on `:has(`, `>`, `+`, `~` and attribute selectors
+instead of faking a match. **No browser is available in this environment, so nothing below is a
+live-YouTube result.**
+
+**Verdict: PASS on every check the ticket lists (1–7). FAIL on one extra probe the ticket does not
+cover: the wrapper pass can hide first-party search results and shelves (DEF-1, High).**
+The primary home-feed defect is genuinely fixed — the ad.jpg-shaped tile is now hidden at the outer
+`ytd-rich-item-renderer`, so no empty grid cell is left — but the wrapper list also targets
+container-level tags, and that can blank far more than one ad. See §3.
+
+### 1. PASS/FAIL table
+
+| # | Check (ticket item) | Command actually run | Observed output | Verdict |
+|---|---|---|---|---|
+| 1 | Stub tree models the required ad surfaces + negatives (home-feed ad tile, rich-section ad tile, watch `#secondary` promoted card, search promoted unit; normal video card, merch shelf, organic rich-section shelf, plain `#content` video) | `node .verify/qa_tiles_dom.js` | `PASS stub tree models the ticket's ad tiles and negative controls`; four `INFO … tile:` chain dumps (§2.1) | **PASS** |
+| 2 | Stylesheet selectors matched for real (tag/id/class/descendant), not substrings; every expected ad rule present | `node .verify/qa_tiles_dom.js` | `PASS selector engine does real matching, not substring matching`; `INFO stylesheet rules: 17`; `PASS adBlocking=true injects one stylesheet that parses and covers every ad rule` | **PASS** |
+| 3 | ad.jpg tile hidden **including its outer wrapper** (no leftover empty grid cell) | `node .verify/qa_tiles_dom.js` | `INFO ad-cell wrapper: marker=true hidden_by=".safeblock-hidden-tile"`; `PASS ad.jpg-shaped tile is hidden at the OUTER ytd-rich-item-renderer (no empty cell)` | **PASS** |
+| 4 | `ytd-rich-section-renderer` ad tile hidden at the section level | `node .verify/qa_tiles_dom.js` | `INFO rich-section ad tile: marker=true hidden_by=".safeblock-hidden-tile"`; `PASS ytd-rich-section-renderer ad tile is hidden at the section level` | **PASS** |
+| 5 | Watch `#secondary` + search promoted units hidden | `node .verify/qa_tiles_dom.js` | `INFO watch sidebar ad hidden_by="ytd-compact-promoted-video-renderer"`, `INFO search text ad hidden_by="ytd-promoted-sparkles-text-search-renderer"`; `PASS watch-page and search promoted units are hidden by their own rules` | **PASS** |
+| 6 | Negative controls explicitly NOT hidden and not marked (normal video card, merch shelf, organic rich-section shelf, plain `#content` video, real `ytd-rich-grid-media` card) | `node .verify/qa_tiles_dom.js` | nine `INFO control …: hidden_by=null marker=false` lines + eight structural sweeps; `PASS negative controls are NOT hidden and carry no marker class` | **PASS** |
+| 7 | Negative control **with teeth**: same harness against the pre-change script must fail | `node .verify/qa_tiles_dom.js --script .verify/old_youtube.js` | exit **1**, `8 check(s) failed`, incl. `outer ytd-rich-item-renderer (#ad-cell) has no safeblock-hidden-tile marker` (§2.2) | **PASS** (control fails as required) |
+| 8 | Gating: `adBlocking=false` at boot → no style element, no `safeblock-hidden-tile` class | `node .verify/qa_tiles_dom.js` | `INFO off-boot: style=false markers=0 observers=0 timers=0 docListeners=0 windowListeners=0 storageListeners=1`; `PASS gating: adBlocking=false at boot …` | **PASS** |
+| 9 | Gating: runtime toggle-off removes the style **and** strips the marker class from every wrapper | `node .verify/qa_tiles_dom.js` | `INFO toggle-off: pendingTimersBefore=1 pendingTimersAfter=0 style=false markers=0 observers connected=0 …`; `PASS gating: toggle off …` | **PASS** |
+| 10 | Gating: toggle-on re-applies style + markers | `node .verify/qa_tiles_dom.js` | `INFO toggle-on: style=true markers=<ytd-rich-item-renderer id=ad-cell>,<ytd-rich-section-renderer id=rich-section-ad>,<ytd-item-section-renderer id=search-ad-section> …`; both toggle-on checks `PASS` | **PASS** |
+| 11 | Hygiene: no new timers/polling vs HEAD; MutationObserver behaviour unchanged; `stop()` leaves no marker | `node .verify/qa_tiles_static.js`; `node .verify/qa_tiles_dom.js` | `setTimeout: new=1 pre-change=1`, `setInterval: new=0 pre-change=0`, `requestAnimationFrame: new=0 pre-change=0`; `PASS MutationObserver wiring is byte-identical…`; marker count 0 after `stop()` (§2.3, §2.1) | **PASS** |
+| 12 | Static review: only `content/youtube.js` changed; no `eval`/`new Function`/remote fetch; no page-data logging; no first-party content selector in `HIDE_SELECTORS`; no `:has(` | `node .verify/qa_tiles_static.js` | `changed paths: ["content/youtube.js"]`; `eval/new Function: 0`, `fetch/…: 0`, `console.*: 0`; `PASS HIDE_SELECTORS contains no first-party content selector`; `PASS no :has( …` | **PASS** |
+| 13 | **Extra probe (QA-added):** container-level wrapper tags must not hide first-party content that shares the container | `node .verify/qa_tiles_section_probe.js` | exit **1**; `FAIL P1 search … organic result is hidden (section marked: true)`; `FAIL P2 rich section … shelf … is hidden` (§2.4) | **FAIL — DEF-1 (High)** |
+| 14 | Packaging state: zip / bundle vs post-change source | `python3 .verify/qa_tiles_artifacts.py` (exit 0 — the script compares and reports, it does not assert) | `RESULT: STALE -> zip content/youtube.js is stale; bundle refs/heads/main 331517e predates the change` (§2.5) | **FAIL — DEF-2 (Medium), DEF-3 (Low)** |
+| 15 | Broader checks re-run after the change | `node .verify/check_scope.js`; `node .verify/check_resource_types.js`; `node .verify/check_amo_manifest.js`; `node .verify/check_youtube_feed.js`; `python3 -m json.tool` ×3; `node --check` ×10 | 8 / 12 / 6 / 8 PASS, all exit 0; JSON 3/3 exit 0; `node --check` 10/10 exit 0 (§2.6) | **PASS** |
+
+### 2. Commands and verbatim output
+
+#### 2.1 Main harness — `node .verify/qa_tiles_dom.js` (exit 0, 14 checks passed)
+
+```
+$ node .verify/qa_tiles_dom.js
+script under test: content/youtube.js
+INFO engine sanity: exact tag/#id/class/descendant match; lookalike tag, id text and class text do not
+PASS selector engine does real matching, not substring matching
+INFO ad.jpg tile: <html> > <body> > <ytd-app> > <ytd-page-manager> > <ytd-browse> > <ytd-two-column-browse-results-renderer> > <div id=primary> > <ytd-rich-grid-renderer> > <div id=contents> > <ytd-rich-item-renderer id=ad-cell>
+INFO rich-section ad tile: <html> > <body> > <ytd-app> > <ytd-page-manager> > <ytd-browse> > <ytd-two-column-browse-results-renderer> > <div id=primary> > <ytd-rich-grid-renderer> > <div id=contents> > <ytd-rich-section-renderer id=rich-section-ad>
+INFO watch sidebar ad: <html> > <body> > <ytd-app> > <ytd-page-manager> > <ytd-browse> > <ytd-two-column-browse-results-renderer> > <div id=secondary> > <ytd-compact-promoted-video-renderer id=watch-sidebar-ad>
+INFO search text ad: <html> > <body> > <ytd-app> > <ytd-page-manager> > <ytd-search> > <div id=container> > <ytd-two-column-search-results-renderer> > <div id=primary> > <ytd-section-list-renderer> > <div id=contents> > <ytd-item-section-renderer id=search-ad-section> > <div id=contents> > <ytd-promoted-sparkles-text-search-renderer id=search-text-ad>
+INFO control normal video card: <html> > <body> > <ytd-app> > <ytd-page-manager> > <ytd-browse> > <ytd-two-column-browse-results-renderer> > <div id=primary> > <ytd-rich-grid-renderer> > <div id=contents> > <ytd-rich-item-renderer id=fp-video-1> > <div id=content> > <ytd-video-renderer id=fp-video-renderer>
+INFO control merch shelf: <html> > <body> > <ytd-app> > <div id=below> > <ytd-watch-metadata> > <div id=merch-shelf> > <ytd-merch-shelf-renderer id=merch-shelf-renderer>
+INFO control ordinary rich-section shelf: <html> > <body> > <ytd-app> > <ytd-page-manager> > <ytd-browse> > <ytd-two-column-browse-results-renderer> > <div id=primary> > <ytd-rich-grid-renderer> > <div id=contents> > <ytd-rich-section-renderer id=rich-section-organic> > <div id=content> > <ytd-shelf-renderer id=organic-shelf>
+INFO control plain #content video: <html> > <body> > <ytd-app> > <ytd-page-manager> > <ytd-search> > <div id=container> > <ytd-two-column-search-results-renderer> > <div id=primary> > <ytd-section-list-renderer> > <div id=contents> > <ytd-item-section-renderer id=search-organic-section> > <div id=contents> > <ytd-video-renderer id=search-organic-1>
+PASS stub tree models the ticket's ad tiles and negative controls
+INFO stylesheet rules: 17
+PASS adBlocking=true injects one stylesheet that parses and covers every ad rule
+INFO ad-cell wrapper: marker=true hidden_by=".safeblock-hidden-tile"
+INFO ad-cell inner: ad-slot hidden_by="ytd-ad-slot-renderer" in-feed hidden_by="ytd-in-feed-ad-layout-renderer" sparkles hidden_by="ytd-promoted-sparkles-web-renderer" img hidden_by="ytd-promoted-sparkles-web-renderer"
+PASS ad.jpg-shaped tile is hidden at the OUTER ytd-rich-item-renderer (no empty cell)
+INFO rich-section ad tile: marker=true hidden_by=".safeblock-hidden-tile"
+PASS ytd-rich-section-renderer ad tile is hidden at the section level
+INFO watch sidebar ad hidden_by="ytd-compact-promoted-video-renderer"
+INFO search text ad hidden_by="ytd-promoted-sparkles-text-search-renderer"
+INFO masthead ad hidden_by="#masthead-ad"
+INFO player-ads hidden_by="#player-ads"
+PASS watch-page and search promoted units are hidden by their own rules
+INFO control ordinary grid video card (ytd-rich-item-renderer): hidden_by=null marker=false
+INFO control ordinary video renderer: hidden_by=null marker=false
+INFO control real grid card (ytd-rich-item-renderer > #content > ytd-rich-grid-media): hidden_by=null marker=false
+INFO control merch shelf: hidden_by=null marker=false
+INFO control rich-section holding an ordinary shelf: hidden_by=null marker=false
+INFO control ordinary shelf: hidden_by=null marker=false
+INFO control shelf's own grid cell: hidden_by=null marker=false
+INFO control plain ytd-video-renderer in a #content: hidden_by=null marker=false
+INFO control second plain video: hidden_by=null marker=false
+INFO control watch page related video: hidden_by=null marker=false
+INFO sweep <ytd-video-renderer>: 3 element(s), none matched by a rule
+INFO sweep <ytd-merch-shelf-renderer>: 1 element(s), none matched by a rule
+INFO sweep <ytd-rich-grid-media>: 1 element(s), none matched by a rule
+INFO sweep <ytd-shelf-renderer>: 1 element(s), none matched by a rule
+INFO sweep <ytd-compact-video-renderer>: 1 element(s), none matched by a rule
+INFO sweep <ytd-rich-grid-renderer>: 1 element(s), none matched by a rule
+INFO sweep #content: 5 element(s), none matched by a rule
+INFO sweep #primary: 2 element(s), none matched by a rule
+INFO sweep #related: 1 element(s), none matched by a rule
+INFO sweep #items: 1 element(s), none matched by a rule
+INFO marker set: ["<ytd-rich-item-renderer id=ad-cell>","<ytd-rich-section-renderer id=rich-section-ad>","<ytd-item-section-renderer id=search-ad-section>"]
+PASS negative controls are NOT hidden and carry no marker class
+INFO observer target=<div id=movie_player> options={"childList":true,"subtree":true,"attributes":true,"attributeFilter":["class"]}
+PASS observer behaviour: one observer on #movie_player, childList+subtree+attributes[class]
+INFO console calls during coverage scenario: 0
+PASS no console output anywhere during the run (no page-data logging)
+INFO marker class writes during boot pass: 3
+INFO flush #1 deliveries=1 timers created=1 delay=250
+INFO class writes after the debounced pass: 3 (boot 3)
+INFO flush #2 deliveries=0 timers created=1
+PASS feedback loop settles: a mutation pass converges and creates no further timers
+INFO off-boot: style=false markers=0 observers=0 timers=0 docListeners=0 windowListeners=0 storageListeners=1
+INFO toggle-on: style=true markers=<ytd-rich-item-renderer id=ad-cell>,<ytd-rich-section-renderer id=rich-section-ad>,<ytd-item-section-renderer id=search-ad-section> observers=1 docListeners=1 windowListeners=1
+PASS gating: toggle on -> style + markers + observer + nav listeners return
+INFO toggle-off: pendingTimersBefore=1 pendingTimersAfter=0 style=false markers=0 observers connected=0 docListeners=0 windowListeners=0
+PASS gating: toggle off -> style removed AND marker class stripped from every wrapper
+INFO toggle-on#2: style=true markers=<ytd-rich-item-renderer id=ad-cell>,<ytd-rich-section-renderer id=rich-section-ad>,<ytd-item-section-renderer id=search-ad-section>
+PASS gating: toggle on again -> style and markers restored
+PASS gating: adBlocking=false at boot -> no style, no marker, no observer, no timer
+
+14 checks passed
+[exit code: 0]
+```
+
+What this proves, check by check:
+
+* **Outer wrapper, not just the inner renderer.** `#ad-cell` (`ytd-rich-item-renderer`) carries the
+  marker and is itself matched by `.safeblock-hidden-tile { display: none !important; }`, so the grid
+  cell collapses and no empty tile is left. The inner `ytd-ad-slot-renderer`,
+  `ytd-in-feed-ad-layout-renderer`, `ytd-promoted-sparkles-web-renderer` and the `img` inside it are all
+  hidden as well, so the card cannot paint either way.
+* **Rich-section tile.** `#rich-section-ad` (`ytd-rich-section-renderer`) is marked and hidden.
+  The marker set is exactly three ad-only wrappers: `#ad-cell`, `#rich-section-ad`, and the search text
+  ad's own ad-only `ytd-item-section-renderer` (`#search-ad-section`). Nothing else in the tree is
+  marked.
+* **Negative controls.** Nine controls (ordinary grid cell + `ytd-video-renderer` card, a real
+  `ytd-rich-grid-media` card, merch shelf, organic rich-section + shelf, shelf's own cell, both search
+  organic results, watch-page related video) report `hidden_by=null marker=false`. Structural sweeps
+  over `<ytd-video-renderer>` (3), `<ytd-merch-shelf-renderer>` (1), `<ytd-rich-grid-media>` (1),
+  `<ytd-shelf-renderer>` (1), `<ytd-compact-video-renderer>` (1), `<ytd-rich-grid-renderer>` (1) and the
+  ids `#content` (4), `#primary` (2), `#related`, `#items` confirm **no injected rule matches any of
+  them** — this is a tree sweep, not a re-statement of the selector list.
+* **Idempotent marking.** Boot writes the marker class exactly 3 times, one per ad wrapper; the
+  debounced pass that follows the marking mutations writes **zero** further classes, and a second
+  mutation flush after settling delivers 0 records and creates 0 timers. The observer feedback loop
+  dies out instead of spinning.
+* **Gating.** Off at boot: no style, no marker, no observer, no timer, no nav listener, one passive
+  `storage.onChanged` listener (by design). Toggle on: style + three markers + observer + both nav
+  listeners return. Toggle off: style gone (`<head>` emptied), **0** elements still carrying
+  `safeblock-hidden-tile`, observer disconnected, both nav listeners detached, pending 250 ms debounce
+  timer cleared.
+
+#### 2.2 Negative control with teeth — `node .verify/qa_tiles_dom.js --script .verify/old_youtube.js` (exit 1; excerpt — the trailing summary repeats the failures)
+
+The pre-change script had to be taken from `HEAD~1`: the ticket's literal
+`git show HEAD:content/youtube.js` now returns the **post-change** file because the change is committed.
+
+```
+$ git show HEAD:content/youtube.js | sha256sum; sha256sum content/youtube.js
+44008004ff5d2cc9b4c516bd57c9811de2ffbde20462ffc141b1217aefb71fb3  -
+44008004ff5d2cc9b4c516bd57c9811de2ffbde20462ffc141b1217aefb71fb3  content/youtube.js
+
+$ git show HEAD~1:content/youtube.js > .verify/old_youtube.js   # 322 lines, 678242a5…
+$ node .verify/qa_tiles_dom.js --script .verify/old_youtube.js
+FAIL adBlocking=true injects one stylesheet that parses and covers every ad rule - stylesheet is missing ad rules: ytd-compact-promoted-video-renderer, ytd-promoted-sparkles-text-search-renderer, ytd-search-pyv-renderer
+FAIL ad.jpg-shaped tile is hidden at the OUTER ytd-rich-item-renderer (no empty cell) - outer ytd-rich-item-renderer (#ad-cell) has no safeblock-hidden-tile marker
+FAIL ytd-rich-section-renderer ad tile is hidden at the section level - outer ytd-rich-section-renderer (#rich-section-ad) has no marker
+FAIL watch-page and search promoted units are hidden by their own rules - ytd-compact-promoted-video-renderer is not hidden
+FAIL negative controls are NOT hidden and carry no marker class - #ad-cell (feed ad tile) missing from marker set
+FAIL feedback loop settles: a mutation pass converges and creates no further timers - marked tiles produced no observable mutation - the flush is vacuous
+FAIL gating: toggle on -> style + markers + observer + nav listeners return - expected 3 marked ad-only wrappers after toggle-on, got 0
+FAIL gating: toggle on again -> style and markers restored - expected 3 marked ad-only wrappers after second toggle-on, got 0
+8 check(s) failed
+[exit code: 1]
+```
+
+Key evidence that the old script leaves the outer tile visible:
+
+```
+INFO stylesheet rules: 13
+INFO ad-cell wrapper: marker=false hidden_by=null
+INFO rich-section ad tile: marker=false hidden_by=null
+INFO marker set: []
+```
+
+The same harness therefore distinguishes the two scripts: green (exit 0) on `HEAD`, red (exit 1, 8
+failures) on `HEAD~1`. The negative control is not vacuous, and the old script reproduces the reported
+bug (outer wrapper visible ⇒ blank grid cell).
+
+#### 2.3 Static review — `node .verify/qa_tiles_static.js` (exit 0, 10 checks passed)
+
+```
+HIDE_SELECTORS (16): ["#player-ads",".ytp-ad-overlay-container","ytd-display-ad-renderer",".ytp-ad-module","ytd-ad-slot-renderer","ytd-in-feed-ad-layout-renderer","ytd-promoted-sparkles-web-renderer","ytd-promoted-video-renderer","ytd-compact-promoted-video-renderer","ytd-promoted-sparkles-text-search-renderer","ytd-search-pyv-renderer","ytd-companion-slot-renderer","ytd-banner-promo-renderer","ytd-statement-banner-renderer","ytd-brand-video-shelf-renderer","#masthead-ad"]
+TILE_WRAPPER_TAGS (4): ["ytd-rich-item-renderer","ytd-rich-section-renderer","ytd-rich-grid-media","ytd-item-section-renderer"]
+INFO changed paths: ["content/youtube.js"]
+INFO diffstat: content/youtube.js | 153 +++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 150 insertions(+), 3 deletions(-)
+PASS only content/youtube.js changed between HEAD~1 and HEAD
+INFO eval/new Function occurrences: 0
+PASS no eval / new Function / dynamic code in content/youtube.js
+INFO fetch/XMLHttpRequest/WebSocket/importScripts/sendBeacon occurrences: 0
+PASS no remote fetch or network API in content/youtube.js
+INFO console.* occurrences: 0
+PASS no console logging of page data
+INFO forbidden selectors ["ytd-video-renderer","ytd-merch-shelf-renderer","ytd-rich-grid-media","*"] absent from HIDE_SELECTORS
+PASS HIDE_SELECTORS contains no first-party content selector
+INFO :has( occurrences: 0; 4 wrapper tags are collapsed in JS instead
+PASS no :has( parent selector anywhere in the file
+INFO setTimeout: new=1 pre-change=1
+INFO setInterval: new=0 pre-change=0
+INFO requestAnimationFrame: new=0 pre-change=0
+INFO clearTimeout: new=1 pre-change=1
+INFO clearInterval: new=0 pre-change=0
+INFO DEBOUNCE_MS: 250
+PASS no new timers or polling versus the pre-change script
+INFO addEventListener(: new=0 pre-change=0
+INFO removeEventListener(: new=0 pre-change=0
+INFO document/window[method]( registration site: new=2 pre-change=2
+INFO yt-navigate-finish listener: new=1 pre-change=1
+INFO popstate listener: new=1 pre-change=1
+INFO storage.onChanged.addListener: new=2 pre-change=2
+PASS no new event listeners versus the pre-change script
+INFO observe options: childList: true, subtree: true, attributes: true, attributeFilter: ["class"]
+PASS MutationObserver wiring is byte-identical to the pre-change script
+INFO node --check content/youtube.js: exit 0
+PASS content/youtube.js still parses (node --check)
+
+10 static checks passed
+[exit code: 0]
+```
+
+Diff shape: 150 insertions, 3 deletions in one file — marker plumbing (`hasTileMarker`/`addTileMarker`/
+`removeTileMarker`/`isTileWrapper`/`nearestTileWrapper`/`containsAdRenderer`/`hideAdTiles`/
+`stripTileMarkers`), the `TILE_*` constants, three added `HIDE_SELECTORS` entries, the `STYLE_SELECTORS`
+rule list, one `hideAdTiles()` call in `runChecks()`, `stripTileMarkers()` in `stop()`, and comments.
+No dead code, no debug output, no unrelated refactor, no new timer, interval, `requestAnimationFrame`,
+listener or observer option.
+
+#### 2.4 Extra probe — `node .verify/qa_tiles_section_probe.js` (exit 1; excerpt — the trailing summary repeats the two failures)
+
+```
+INFO section: <html> > <body> > <ytd-app> > <ytd-page-manager> > <ytd-search> > <div id=container> > <ytd-two-column-search-results-renderer> > <div id=primary> > <ytd-section-list-renderer> > <div id=contents> > <ytd-item-section-renderer id=search-mixed-section>
+INFO ad hidden_by="ytd-promoted-sparkles-text-search-renderer"
+INFO organic result <ytd-video-renderer id=search-organic-1>: hidden_by=".safeblock-hidden-tile" marker_on_section=true
+INFO organic result <ytd-video-renderer id=search-organic-2>: hidden_by=".safeblock-hidden-tile" marker_on_section=true
+FAIL P1 search: promoted ad hidden without hiding the organic results in the same section - first-party organic result <ytd-video-renderer id=search-organic-1> is hidden (section marked: true)
+INFO section: <html> > <body> > <ytd-app> > <ytd-page-manager> > <ytd-browse> > <ytd-two-column-browse-results-renderer> > <div id=primary> > <ytd-rich-grid-renderer> > <div id=contents> > <ytd-rich-section-renderer id=rich-section-ad>
+INFO organic shelf hidden_by=".safeblock-hidden-tile" section marker=true
+FAIL P2 rich section: ad tile hidden without hiding an organic shelf in the same section - first-party shelf in the same rich section is hidden (section marked: true)
+INFO P3 ad anchor nested inside ytd-rich-grid-media:
+INFO   marker on ytd-rich-grid-media=true
+INFO   outer ytd-rich-item-renderer hidden_by=null
+DEMONSTRATED P3: the walk stops at ytd-rich-grid-media, so the outer grid cell is left visible (blank cell)
+
+2 probe case(s) failed
+[exit code: 1]
+```
+
+#### 2.5 Packaging state — `python3 .verify/qa_tiles_artifacts.py` (exit 0, reported STALE)
+
+```
+source content/youtube.js: bytes=13934 sha256=44008004ff5d2cc9b4c516bd57c9811de2ffbde20462ffc141b1217aefb71fb3
+source has hideAdTiles(): True | has safeblock-hidden-tile: True
+zip content/youtube.js: bytes=8713 sha256=678242a5df6ddaddbabeb7be9d4e8c2c9a2604b4fb10525b7a60f3000625f61d
+zip has hideAdTiles(): False | has safeblock-hidden-tile: False
+zip matches source: False
+zip other entries: compared=17 mismatching=['content/youtube.js', 'manifest.json']
+bundle heads: 331517e8bf98fd30009d0f2d24e88c617952ff85 refs/heads/main
+bundle refs/heads/main: 331517e8bf98fd30009d0f2d24e88c617952ff85
+bundle main:content/youtube.js: bytes=8713 sha256=678242a5df6ddaddbabeb7be9d4e8c2c9a2604b4fb10525b7a60f3000625f61d
+bundle has hideAdTiles(): False
+bundle matches source: False
+
+RESULT: STALE -> zip content/youtube.js is stale; bundle refs/heads/main 331517e predates the change
+[exit code: 0]
+```
+
+The zip entry and the bundle's `main` are byte-identical to the **pre-change** script
+(`678242a5…`, 8713 bytes = `HEAD~1`'s file), i.e. the whole-tile fix is absent from both. The zip also
+predates the change (19:11 vs. source 19:19) and the bundle's `refs/heads/main` is two commits behind
+`HEAD` (`331517e` = `HEAD~2`).
+
+#### 2.6 Broader checks re-run after the change
+
+```
+$ node .verify/check_scope.js            -> exit 0 (8 PASS lines)
+$ node .verify/check_resource_types.js   -> exit 0 (12 PASS lines)
+$ node .verify/check_amo_manifest.js     -> exit 0 (6 PASS lines)
+$ node .verify/check_youtube_feed.js     -> exit 0 (8 PASS lines)
+$ python3 -m json.tool manifest.json rules/ads_trackers.json rules/adult_filter.json  -> 3/3 exit 0
+$ node --check content/youtube.js lib/compat.js lib/settings.js lib/rules.js popup/popup.js \
+    options/options.js .verify/qa_tiles_lib.js .verify/qa_tiles_dom.js \
+    .verify/qa_tiles_static.js .verify/qa_tiles_section_probe.js   -> 10/10 exit 0
+```
+
+(The Developer's `.verify/dev_youtube_tile.js` was **not** used as evidence; it is not part of the
+results above.)
+
+### 3. Defects
+
+Numbered within this addendum.
+
+| ID | Severity | File:line | Problem | Evidence | Fix |
+|---|---|---|---|---|---|
+| **DEF-1** | **High** (browser-unverified) | `content/youtube.js:54-59` (`TILE_WRAPPER_TAGS`), `:255-266`, `:268-277`, `:282-293` | The wrapper walk stops at the *nearest* tag in `TILE_WRAPPER_TAGS`, which includes two **container** tags: `ytd-item-section-renderer` (search-results list) and `ytd-rich-section-renderer`. `containsAdRenderer()` keeps the marker whenever the container holds any ad renderer, so a container that holds an ad **and** first-party items is hidden in full. | `node .verify/qa_tiles_section_probe.js` → `FAIL P1` (organic search results hidden) and `FAIL P2` (organic shelf hidden), exit 1 | Drop the container tags, or only mark a container when it contains no first-party content (`ytd-video-renderer`, `ytd-rich-grid-media`, `ytd-compact-video-renderer`, `ytd-shelf-renderer`). Filed as `tkt_582388e8-6c7d-404a-8120-3de46005d079` (Developer, High). |
+| **DEF-2** | Medium | `safeblock-extension.zip` → `content/youtube.js:26-70` | Distributable zip still ships the pre-change `content/youtube.js`: no `hideAdTiles()`, no `TILE_MARKER_CLASS`, no marker rule, three missing ad selectors. Installers get no whole-tile fix at all. | §2.5 (`zip matches source: False`, sha `678242a5…` = `HEAD~1`) | Rebuild the zip from the post-change tree and verify the entry sha256 equals `44008004…`. Covered by `tkt_a4e5d20e-c281-417d-b734-b511c3869804` (Release Engineer). |
+| **DEF-3** | Low | `safeblock-main.bundle` → `refs/heads/main 331517e` | Git bundle points at `HEAD~2` and carries the old 8713-byte script. It becomes correct as soon as a bundle is rebuilt from the post-change history. | §2.5 (`bundle main:content/youtube.js sha256: 678242a5…`) | Rebuild the bundle from `main` after the change; verify `git show refs/heads/main:content/youtube.js` sha256 is `44008004…`. Same ticket as DEF-2. |
+
+Not a defect, but recorded because the artifact check surfaced it: the zip's `manifest.json` is
+`"version": "0.1.0"` while the working tree now says `0.1.1`. The working tree change
+(`M manifest.json`, one line, unstaged, mtime 19:25) appeared **during** this verification and was
+**not** made by QA — see §7. It is outside the change under test and does not affect any verdict here.
+
+### 4. Firefox-113 reasoning for avoiding `:has(` — I agree
+
+`manifest.json` declares `browser_specific_settings.gecko.strict_min_version = "113.0"` (verified with
+`node -e 'const m=require("./manifest.json"); …'`), and `:has()` only shipped in Firefox 121. On
+Firefox 113–120 the whole rule containing `:has(...)` is dropped by the CSS parser, so a
+`:has()`-based collapse would not degrade to "hides the inner card but leaves the cell" — it would
+not hide anything at all on those versions. The JS walk plus a class-based rule has no such cliff, and
+the cost is bounded (`MAX_WRAPPER_DEPTH = 16`, one anchor query per selector, measured 3 class writes at
+boot and 0 on the following pass). The comment at `content/youtube.js:186-193` is accurate.
+
+The trade-off I would flag is not Firefox support but *which* tags the walk may stop at — that is DEF-1.
+
+### 5. Residual risks / not verified
+
+1. **No browser, no live YouTube.** Every statement above comes from a stub tree modeled on the
+   renderer names in the ticket and in `content/youtube.js`. Shadow DOM, renamed tags, attribute-level
+   selectors and real ad markup variants were not exercised. A Chrome + Firefox smoke test on the home
+   feed, a watch page and `youtube.com/results` is still required.
+2. **DEF-1's real-world trigger is unverified.** The stub shows the mechanism (a container with an ad
+   plus first-party items is hidden wholesale). Whether live YouTube really puts the search promoted
+   unit in the same `ytd-item-section-renderer` as the organic results needs a live check; if it does,
+   the symptom is "all search results disappear", which is worse than the ad it fixes.
+3. **`ytd-rich-grid-media` in `TILE_WRAPPER_TAGS`** (probe P3): if an ad anchor is ever nested inside a
+   real grid card, the walk stops at the card and the outer `ytd-rich-item-renderer` cell stays
+   visible — the exact blank-cell symptom this change fixes. Low severity (markup-dependent), included
+   in DEF-1's ticket.
+4. **Marker pruning depends on a pass being scheduled.** A recycled `ytd-rich-item-renderer` is
+   un-marked by the next `hideAdTiles()` pass, and the observer watches `#movie_player` when it exists
+   (else `<body>`), so on a page with a player, feed mutations are not what triggers the pass. Verified
+   only in the stub; a stale marker would show as a hidden first-party tile.
+5. **`ytd-banner-promo-renderer` / `ytd-statement-banner-renderer` / `ytd-brand-video-shelf-renderer`**
+   can carry YouTube's own (non-paid) promos. That predates this change and matches the earlier
+   ticket's requested list; still a product trade-off.
+6. **One passive `storage.onChanged` listener** stays registered while ad blocking is off, by design.
+   Everything else is detached by `stop()` (verified in §2.1).
+7. **Artifacts** (DEF-2/DEF-3) are stale; QA did not rebuild them.
+
+### 6. Acceptance criteria mapping
+
+1. Dated addendum with one PASS/FAIL row per check and the exact command — **met** (§1, 15 rows).
+2. Stub evidence that the ad.jpg tile is hidden at the outer `ytd-rich-item-renderer` and that the
+   `ytd-rich-section-renderer` ad tile is likewise — **met** (§2.1: `marker=true
+   hidden_by=".safeblock-hidden-tile"` for both, plus inner-renderer proof).
+3. Negative controls explicitly shown NOT hidden — **met** (§2.1: nine `hidden_by=null marker=false`
+   controls and eight structural sweeps).
+4. Negative-control run against the pre-change script fails — **met** (§2.2: exit 1, 8 failures, outer
+   wrapper visible in the old script). Note the command uses `HEAD~1`, not `HEAD`, and §2.2 shows why.
+5. Gating rows (off at boot; toggle off strips style **and** markers; toggle on restores both) —
+   **met** (§2.1, rows 8–10).
+6. Artifact staleness stated as a defect with severity, and the recommendation distinguishes source
+   from artifacts — **met** (§3 DEF-2/DEF-3; §8).
+7. Every quoted command was actually run with its exit code; nothing unrun is marked PASS — **met**;
+   the browser smoke test is listed as *not verified* (§5.1) rather than as a pass.
+
+### 7. QA self-review
+
+* **Tracked files changed by QA:** `QA_REPORT.md` only (this addendum). `content/youtube.js`,
+  `manifest.json`, `rules/*`, `popup/*`, `options/*` were **not** touched by QA.
+* **Out-of-scope working-tree change present during this run:** `git status --porcelain` shows
+  ` M manifest.json` — a one-line unstaged `"version": "0.1.0"` → `"0.1.1"` bump with mtime 19:25,
+  which appeared while this verification was running and was not authored by QA. It is left untouched
+  and is unrelated to the change under test (`git diff HEAD~1 HEAD` still contains only
+  `content/youtube.js`). Whoever owns it must fold it into the Release Engineer rebuild, or the
+  artifact version will not match the manifest.
+* **QA-added files (all gitignored scratch):** `.verify/qa_tiles_lib.js` (stub DOM + real selector
+  matcher + tree fixtures), `.verify/qa_tiles_dom.js` (main harness), `.verify/qa_tiles_static.js`
+  (static review), `.verify/qa_tiles_section_probe.js` (DEF-1 probe), `.verify/qa_tiles_artifacts.py`
+  (artifact comparison), plus `.verify/old_youtube.js`, `.verify/zip_manifest.json` and the
+  `out_*.txt` captures.
+* **Reproduction, in order:**
+  `node .verify/qa_tiles_dom.js` (expect exit 0);
+  `git show HEAD~1:content/youtube.js > .verify/old_youtube.js && node .verify/qa_tiles_dom.js --script .verify/old_youtube.js`
+  (expect exit 1);
+  `node .verify/qa_tiles_static.js` (expect exit 0);
+  `node .verify/qa_tiles_section_probe.js` (expect exit 1 — DEF-1);
+  `python3 .verify/qa_tiles_artifacts.py` (expect `RESULT: STALE`).
+* **Self-review of my own harness:** the matcher refuses `:has(`/`>` instead of faking a match; the
+  flush is proven non-vacuous (`assert(deliveries >= 1, …)`, which is exactly the assertion that fails
+  on the old script); the negative-control run is green on `HEAD` and red on `HEAD~1`; the
+  `ytd-item-section-renderer` sweep entry was removed from the *first-party* list only because that tag
+  is an intentional wrapper target (its behaviour is covered by DEF-1 instead). One harness bug was
+  found and fixed during this run: `content/youtube.js` was being evaluated twice per env, which
+  double-counted observers and listeners; after the fix the counts are 1 observer / 1 storage listener.
+
+### 8. Recommendation
+
+* **Source change (`content/youtube.js` @ `2a48baf`): PASS on the requested behaviour, but DO NOT SHIP
+  as-is.** The whole-tile fix works for the ad.jpg home-feed case and for the rich-section ad tile; all
+  seven requested checks pass and the negative control fails on the old script as required. However
+  DEF-1 (High) means the same pass can hide first-party search results and shelves. It is a small,
+  local fix (`tkt_582388e8-6c7d-404a-8120-3de46005d079`) — do it before this reaches users.
+* **Packaged artifacts: DO NOT SHIP.** `safeblock-extension.zip` (DEF-2, Medium) and
+  `safeblock-main.bundle` (DEF-3, Low) still contain the pre-change 8713-byte script; the whole-tile fix
+  is simply not in them. Rebuild after DEF-1 is fixed, under
+  `tkt_a4e5d20e-c281-417d-b734-b511c3869804`, and re-run
+  `python3 .verify/qa_tiles_artifacts.py` until it prints `RESULT: MATCH`.
+* **Not a ship gate, but required before release:** the manual Chrome + Firefox smoke test on the home
+  feed, a watch page and `youtube.com/results` (this environment cannot run it).
